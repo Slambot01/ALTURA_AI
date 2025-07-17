@@ -4,72 +4,66 @@ import "./App.css";
 function App() {
   const [summary, setSummary] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState(""); // To show which button is loading
   const [error, setError] = useState(null);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [draftStatus, setDraftStatus] = useState(""); // For the draft success message
 
-  // useEffect now actively checks the status when the popup opens.
   useEffect(() => {
-    // Immediately ask the background script to check the status.
     chrome.runtime.sendMessage({ action: "check_auth_status" });
-
-    // Check storage immediately when the component loads
     chrome.storage.local.get(["isLoggedIn"], (result) => {
-      if (result.isLoggedIn) {
-        setIsLoggedIn(true);
-      }
+      if (result.isLoggedIn) setIsLoggedIn(true);
     });
-
-    // Set up a listener for any changes in chrome.storage
     const handleStorageChange = (changes, area) => {
       if (area === "local" && changes.isLoggedIn) {
         setIsLoggedIn(changes.isLoggedIn.newValue);
       }
     };
     chrome.storage.onChanged.addListener(handleStorageChange);
-
-    // Cleanup function
-    return () => {
-      chrome.storage.onChanged.removeListener(handleStorageChange);
-    };
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
   }, []);
 
   const handleSummarizeClick = () => {
-    // ... (This function remains the same)
     setIsLoading(true);
+    setLoadingAction("summarize");
     setSummary("");
     setError(null);
+    setDraftStatus("");
     chrome.runtime.sendMessage({ action: "summarize_page" }, (response) => {
       setIsLoading(false);
-      if (chrome.runtime.lastError || response.error) {
-        setError(response?.error || "An error occurred.");
-      } else if (response.summary) {
-        setSummary(response.summary);
-      }
+      setLoadingAction("");
+      if (response.error) setError(response.error);
+      else if (response.summary) setSummary(response.summary);
+    });
+  };
+
+  // NEW: Function to handle drafting an email
+  const handleDraftEmailClick = () => {
+    setIsLoading(true);
+    setLoadingAction("draft");
+    setSummary("");
+    setError(null);
+    setDraftStatus("");
+    chrome.runtime.sendMessage({ action: "draft_email" }, (response) => {
+      setIsLoading(false);
+      setLoadingAction("");
+      if (response.error) setError(response.error);
+      else if (response.success) setDraftStatus(response.message);
     });
   };
 
   const handleLoginClick = async () => {
-    // ... (This function remains the same)
     try {
       const response = await fetch("http://localhost:3001/api/auth/google");
       const data = await response.json();
-      if (data.url) {
-        chrome.tabs.create({ url: data.url });
-      }
+      if (data.url) chrome.tabs.create({ url: data.url });
     } catch (e) {
-      console.error("Login failed:", e);
       setError("Could not connect to the login service.");
     }
   };
 
-  // NEW: Function to handle logout for debugging
   const handleLogoutClick = () => {
-    // Clear the tokens on the backend (we'll build this next)
-    // For now, just clear the local storage
-    chrome.storage.local.set({ isLoggedIn: false }, () => {
-      setIsLoggedIn(false);
-      console.log("User logged out.");
-    });
+    chrome.storage.local.set({ isLoggedIn: false });
   };
 
   return (
@@ -79,7 +73,6 @@ function App() {
         {isLoggedIn ? (
           <div>
             <p className="welcome-message">Welcome!</p>
-            {/* NEW: Logout button for easy testing */}
             <button onClick={handleLogoutClick} className="logout-button">
               Logout
             </button>
@@ -91,13 +84,26 @@ function App() {
         )}
       </header>
       <main className="App-main">
-        <button
-          onClick={handleSummarizeClick}
-          disabled={isLoading || !isLoggedIn}
-        >
-          {isLoading ? "Summarizing..." : "Summarize Current Page"}
-        </button>
-        {isLoading && <p>Generating summary, this may take a moment...</p>}
+        <div className="action-buttons">
+          <button
+            onClick={handleSummarizeClick}
+            disabled={isLoading || !isLoggedIn}
+          >
+            {isLoading && loadingAction === "summarize"
+              ? "Summarizing..."
+              : "Summarize Page"}
+          </button>
+          <button
+            onClick={handleDraftEmailClick}
+            disabled={isLoading || !isLoggedIn}
+          >
+            {isLoading && loadingAction === "draft"
+              ? "Drafting..."
+              : "Draft Email"}
+          </button>
+        </div>
+
+        {draftStatus && <p className="success-message">{draftStatus}</p>}
         {summary && (
           <div className="summary-container">
             <h3>Summary</h3>

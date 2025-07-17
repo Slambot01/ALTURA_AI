@@ -45,8 +45,74 @@ app.post("/api/summarize", async (req, res) => {
   }
 });
 
-// --- Authentication Routes ---
+// --- NEW: Draft Email Route ---
+app.post("/api/gmail/draft", async (req, res) => {
+  // 1. Check if the user is authenticated
+  if (!userTokens) {
+    return res.status(401).json({ error: "User is not authenticated." });
+  }
 
+  // 2. Get the page content from the request body
+  const { pageContent } = req.body;
+  if (!pageContent) {
+    return res.status(400).json({ error: "Page content is required." });
+  }
+
+  try {
+    // 3. Set the credentials for this specific API call
+    oauth2Client.setCredentials(userTokens);
+    const gmail = google.gmail({ version: "v1", auth: oauth2Client });
+
+    // 4. Use AI to generate a subject and body for the email
+    const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
+      0,
+      4000
+    )}"`;
+
+    const aiResult = await model.generateContent(prompt);
+    const aiResponseText = aiResult.response.text();
+
+    // Clean the AI response to extract the pure JSON string
+    const jsonString = aiResponseText.replace(/```json\n|```/g, "").trim();
+    const emailData = JSON.parse(jsonString);
+    const { subject, body } = emailData;
+
+    // 5. Create a raw email message in MIME format
+    const email = [
+      'Content-Type: text/plain; charset="UTF-8"',
+      "MIME-Version: 1.0",
+      "Content-Transfer-Encoding: 7bit",
+      "to: ", // 'to' field is empty for a draft
+      `subject: ${subject}`,
+      "",
+      body,
+    ].join("\n");
+
+    // The Gmail API requires the raw email to be Base64 encoded
+    const base64EncodedEmail = Buffer.from(email)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_");
+
+    // 6. Call the Gmail API to create the draft
+    await gmail.users.drafts.create({
+      userId: "me",
+      requestBody: {
+        message: {
+          raw: base64EncodedEmail,
+        },
+      },
+    });
+
+    // 7. Send a success response back to the frontend
+    res.json({ success: true, message: "Draft created successfully!" });
+  } catch (error) {
+    console.error("Error creating Gmail draft:", error);
+    res.status(500).json({ error: "Failed to create draft." });
+  }
+});
+
+// --- Authentication Routes (remain the same) ---
 app.get("/api/auth/google", (req, res) => {
   const scopes = [
     "https://www.googleapis.com/auth/userinfo.profile",
@@ -66,7 +132,6 @@ app.get("/api/auth/google/callback", async (req, res) => {
     const { tokens } = await oauth2Client.getToken(code);
     userTokens = tokens;
     console.log("Authentication successful, tokens stored.");
-    // **FIXED**: Instead of redirecting, just show a success message.
     res.send(
       "<h1>Authentication successful!</h1><p>You can close this tab now.</p>"
     );
@@ -76,9 +141,7 @@ app.get("/api/auth/google/callback", async (req, res) => {
   }
 });
 
-// **NEW**: A route for the extension to check login status
 app.get("/api/auth/status", (req, res) => {
-  // If we have tokens stored, the user is logged in.
   if (userTokens) {
     res.json({ isLoggedIn: true });
   } else {
