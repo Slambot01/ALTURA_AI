@@ -10,17 +10,28 @@ function App() {
   const [draftStatus, setDraftStatus] = useState(""); // For the draft success message
 
   useEffect(() => {
+    // When the popup opens, immediately ask the background script to check the login status
     chrome.runtime.sendMessage({ action: "check_auth_status" });
+
+    // Also, check storage right away for the current status
     chrome.storage.local.get(["isLoggedIn"], (result) => {
-      if (result.isLoggedIn) setIsLoggedIn(true);
+      if (result.isLoggedIn) {
+        setIsLoggedIn(true);
+      }
     });
+
+    // Set up a listener for any future changes in storage
     const handleStorageChange = (changes, area) => {
       if (area === "local" && changes.isLoggedIn) {
         setIsLoggedIn(changes.isLoggedIn.newValue);
       }
     };
     chrome.storage.onChanged.addListener(handleStorageChange);
-    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
+
+    // Cleanup function to remove the listener when the component unmounts
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
   }, []);
 
   const handleSummarizeClick = () => {
@@ -37,7 +48,6 @@ function App() {
     });
   };
 
-  // NEW: Function to handle drafting an email
   const handleDraftEmailClick = () => {
     setIsLoading(true);
     setLoadingAction("draft");
@@ -63,7 +73,9 @@ function App() {
   };
 
   const handleLogoutClick = () => {
+    // Clear the local storage which will trigger the UI update
     chrome.storage.local.set({ isLoggedIn: false });
+    // Also tell the backend to clear its tokens (we'll build this next)
   };
 
   return (

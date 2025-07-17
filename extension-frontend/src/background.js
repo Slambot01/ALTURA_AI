@@ -6,10 +6,12 @@ const checkAuthStatus = async () => {
   try {
     const response = await fetch(`${BACKEND_URL}/api/auth/status`);
     const data = await response.json();
+    // Save the status to storage. This will trigger the listener in App.jsx.
     chrome.storage.local.set({ isLoggedIn: data.isLoggedIn });
     console.log("Auth status checked:", data.isLoggedIn);
   } catch (error) {
     console.error("Could not check auth status:", error);
+    // If we can't connect, assume logged out.
     chrome.storage.local.set({ isLoggedIn: false });
   }
 };
@@ -20,22 +22,21 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // --- Message Listener ---
+// This is the main communication hub for the background script.
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  // The UI will send this message when it opens.
   if (request.action === "check_auth_status") {
     checkAuthStatus();
-    sendResponse({ status: "checking" });
-  } else if (
-    request.action === "summarize_page" ||
-    request.action === "draft_email"
-  ) {
-    // This logic now handles both summarizing and drafting
+    sendResponse({ status: "checking" }); // Acknowledge the request
+  }
+  // Handle the summarization request.
+  else if (request.action === "summarize_page") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs[0];
       if (!activeTab) {
         sendResponse({ error: "Could not find an active tab." });
         return;
       }
-      // Get the page content first
       chrome.tabs.sendMessage(
         activeTab.id,
         { action: "get_page_content" },
@@ -50,30 +51,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
             return;
           }
-
-          // Determine which backend endpoint to call
-          let endpoint = "";
-          let body = {};
-          if (request.action === "summarize_page") {
-            endpoint = `${BACKEND_URL}/api/summarize`;
-            body = { text: pageResponse.content };
-          } else {
-            // draft_email
-            endpoint = `${BACKEND_URL}/api/gmail/draft`;
-            body = { pageContent: pageResponse.content };
-          }
-
-          // Call the appropriate backend endpoint
-          fetch(endpoint, {
+          fetch(`${BACKEND_URL}/api/summarize`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
+            body: JSON.stringify({ text: pageResponse.content }),
           })
             .then((res) => res.json())
             .then((data) => sendResponse(data))
             .catch((err) =>
               sendResponse({
-                error: "Failed to connect to the backend service.",
+                error: "Failed to connect to the summarization service.",
               })
             );
         }
