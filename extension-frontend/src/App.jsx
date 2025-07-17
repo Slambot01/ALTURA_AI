@@ -10,14 +10,32 @@ function App() {
   const [error, setError] = useState(null);
 
   const handleSummarizeClick = () => {
-    // This function will eventually contain the logic to:
-    // 1. Message the background script to get the page content.
-    // 2. Send that content to our backend's summarize endpoint.
-    // 3. Display the result.
+    setIsLoading(true);
+    setSummary("");
+    setError(null);
 
-    // For now, we'll just show a placeholder message.
-    setSummary("This button will soon summarize the page!");
-    setError(null); // Clear previous errors
+    // Send a message to the background script to start the process
+    chrome.runtime.sendMessage({ action: "summarize_page" }, (response) => {
+      setIsLoading(false);
+
+      // Check for errors from the background script
+      if (chrome.runtime.lastError) {
+        console.error(
+          "Error from background script:",
+          chrome.runtime.lastError.message
+        );
+        setError("An error occurred. Please try again.");
+        return;
+      }
+
+      if (response.error) {
+        setError(response.error);
+      } else if (response.content) {
+        // For now, we'll just display the raw text content from the page.
+        // Later, we will send this to our backend for summarization.
+        setSummary(response.content);
+      }
+    });
   };
 
   return (
@@ -28,22 +46,27 @@ function App() {
       </header>
       <main className="App-main">
         <button onClick={handleSummarizeClick} disabled={isLoading}>
-          {isLoading ? "Summarizing..." : "Summarize Current Page"}
+          {isLoading ? "Getting Content..." : "Summarize Current Page"}
         </button>
 
         {/* Show a loading message while the summary is being generated */}
-        {isLoading && <p>Getting summary...</p>}
+        {isLoading && <p>Reading page content...</p>}
 
-        {/* Display the summary once it's available */}
+        {/* Display the summary (or raw content for now) once it's available */}
         {summary && (
           <div className="summary-container">
-            <h3>Summary</h3>
-            <p>{summary}</p>
+            <h3>Page Content</h3>
+            {/* We use a <textarea> to better display large blocks of text */}
+            <textarea readOnly value={summary} rows={10} />
           </div>
         )}
 
         {/* Display any errors that occur */}
-        {error && <p className="error-message">{error}</p>}
+        {error && (
+          <p className="error-message" style={{ color: "red" }}>
+            {error}
+          </p>
+        )}
       </main>
     </div>
   );
