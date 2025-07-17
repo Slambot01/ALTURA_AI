@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "AlturaAI Copilot",
+  "version": "0.1.0",
+  "description": "Your AI-powered browser assistant.",
+  "permissions": ["activeTab", "storage"],
+  "action": {
+    "default_popup": "index.html"
+  }
+}
