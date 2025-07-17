@@ -1,40 +1,74 @@
-import { useState } from "react";
-import "./App.css"; // You can add styles here later
+import { useState, useEffect } from "react";
+import "./App.css";
 
 function App() {
-  // State to store the generated summary
   const [summary, setSummary] = useState("");
-  // State to handle loading status while summarizing
   const [isLoading, setIsLoading] = useState(false);
-  // State to store any potential errors
   const [error, setError] = useState(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  // useEffect now actively checks the status when the popup opens.
+  useEffect(() => {
+    // Immediately ask the background script to check the status.
+    chrome.runtime.sendMessage({ action: "check_auth_status" });
+
+    // Check storage immediately when the component loads
+    chrome.storage.local.get(["isLoggedIn"], (result) => {
+      if (result.isLoggedIn) {
+        setIsLoggedIn(true);
+      }
+    });
+
+    // Set up a listener for any changes in chrome.storage
+    const handleStorageChange = (changes, area) => {
+      if (area === "local" && changes.isLoggedIn) {
+        setIsLoggedIn(changes.isLoggedIn.newValue);
+      }
+    };
+    chrome.storage.onChanged.addListener(handleStorageChange);
+
+    // Cleanup function
+    return () => {
+      chrome.storage.onChanged.removeListener(handleStorageChange);
+    };
+  }, []);
 
   const handleSummarizeClick = () => {
+    // ... (This function remains the same)
     setIsLoading(true);
     setSummary("");
     setError(null);
-
-    // Send a message to the background script to start the process
     chrome.runtime.sendMessage({ action: "summarize_page" }, (response) => {
       setIsLoading(false);
-
-      // Check for errors from the background script
-      if (chrome.runtime.lastError) {
-        console.error(
-          "Error from background script:",
-          chrome.runtime.lastError.message
-        );
-        setError("An error occurred. Please try again.");
-        return;
+      if (chrome.runtime.lastError || response.error) {
+        setError(response?.error || "An error occurred.");
+      } else if (response.summary) {
+        setSummary(response.summary);
       }
+    });
+  };
 
-      if (response.error) {
-        setError(response.error);
-      } else if (response.content) {
-        // For now, we'll just display the raw text content from the page.
-        // Later, we will send this to our backend for summarization.
-        setSummary(response.content);
+  const handleLoginClick = async () => {
+    // ... (This function remains the same)
+    try {
+      const response = await fetch("http://localhost:3001/api/auth/google");
+      const data = await response.json();
+      if (data.url) {
+        chrome.tabs.create({ url: data.url });
       }
+    } catch (e) {
+      console.error("Login failed:", e);
+      setError("Could not connect to the login service.");
+    }
+  };
+
+  // NEW: Function to handle logout for debugging
+  const handleLogoutClick = () => {
+    // Clear the tokens on the backend (we'll build this next)
+    // For now, just clear the local storage
+    chrome.storage.local.set({ isLoggedIn: false }, () => {
+      setIsLoggedIn(false);
+      console.log("User logged out.");
     });
   };
 
@@ -42,26 +76,34 @@ function App() {
     <div className="App">
       <header className="App-header">
         <h1>AlturaAI</h1>
-        <p>Your AI Copilot</p>
+        {isLoggedIn ? (
+          <div>
+            <p className="welcome-message">Welcome!</p>
+            {/* NEW: Logout button for easy testing */}
+            <button onClick={handleLogoutClick} className="logout-button">
+              Logout
+            </button>
+          </div>
+        ) : (
+          <button onClick={handleLoginClick} className="login-button">
+            Login with Google
+          </button>
+        )}
       </header>
       <main className="App-main">
-        <button onClick={handleSummarizeClick} disabled={isLoading}>
-          {isLoading ? "Getting Content..." : "Summarize Current Page"}
+        <button
+          onClick={handleSummarizeClick}
+          disabled={isLoading || !isLoggedIn}
+        >
+          {isLoading ? "Summarizing..." : "Summarize Current Page"}
         </button>
-
-        {/* Show a loading message while the summary is being generated */}
-        {isLoading && <p>Reading page content...</p>}
-
-        {/* Display the summary (or raw content for now) once it's available */}
+        {isLoading && <p>Generating summary, this may take a moment...</p>}
         {summary && (
           <div className="summary-container">
-            <h3>Page Content</h3>
-            {/* We use a <textarea> to better display large blocks of text */}
-            <textarea readOnly value={summary} rows={10} />
+            <h3>Summary</h3>
+            <p className="summary-text">{summary}</p>
           </div>
         )}
-
-        {/* Display any errors that occur */}
         {error && (
           <p className="error-message" style={{ color: "red" }}>
             {error}

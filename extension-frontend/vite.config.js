@@ -13,6 +13,8 @@ export default defineConfig({
       input: {
         // The popup is the default entry point
         popup: resolve(__dirname, "index.html"),
+        // NEW: Add the auth success page as an entry point
+        authSuccess: resolve(__dirname, "auth-success.html"),
         // Specify the background script as a separate entry point
         background: resolve(__dirname, "src/background.js"),
         // Specify the content script as a separate entry point
@@ -22,6 +24,8 @@ export default defineConfig({
         // This ensures the output filenames are predictable,
         // without hashes, so the manifest.json can find them.
         entryFileNames: "[name].js",
+        // This ensures the HTML file is also named predictably.
+        assetFileNames: "[name].[ext]",
       },
     },
   },

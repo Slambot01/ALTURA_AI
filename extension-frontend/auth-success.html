@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Authentication Successful</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        text-align: center;
+        padding-top: 50px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Authentication Successful!</h1>
+    <p>You can now close this tab.</p>
+    <script>
+      // When this page loads, it sets a value in the extension's storage
+      // to indicate that the user is now logged in.
+      chrome.storage.local.set({ isLoggedIn: true }, () => {
+        console.log("Login status saved.");
+        // The page will close itself after 1 second.
+        setTimeout(() => {
+          window.close();
+        }, 1000);
+      });
+    </script>
+  </body>
+</html>
