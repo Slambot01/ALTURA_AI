@@ -1,133 +1,259 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore,
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+} from "firebase/firestore";
 import "./App.css";
 
+// --- Add your Firebase project's configuration here ---
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID",
+  storageBucket: "YOUR_STORAGE_BUCKET",
+  messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+  appId: "YOUR_APP_ID",
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 function App() {
+  const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState(false);
+  const [isGithubLoggedIn, setIsGithubLoggedIn] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [summary, setSummary] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [loadingAction, setLoadingAction] = useState(""); // To show which button is loading
-  const [error, setError] = useState(null);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [draftStatus, setDraftStatus] = useState(""); // For the draft success message
+  const [isLoadingAction, setIsLoadingAction] = useState(false);
+
+  // **NEW:** State for the PR review modal
+  const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [reviewContent, setReviewContent] = useState("");
+  const [isReviewLoading, setIsReviewLoading] = useState(false);
 
   useEffect(() => {
-    // When the popup opens, immediately ask the background script to check the login status
     chrome.runtime.sendMessage({ action: "check_auth_status" });
-
-    // Also, check storage right away for the current status
-    chrome.storage.local.get(["isLoggedIn"], (result) => {
-      if (result.isLoggedIn) {
-        setIsLoggedIn(true);
+    chrome.storage.local.get(
+      ["isGoogleLoggedIn", "isGithubLoggedIn"],
+      (result) => {
+        setIsGoogleLoggedIn(!!result.isGoogleLoggedIn);
+        setIsGithubLoggedIn(!!result.isGithubLoggedIn);
       }
-    });
-
-    // Set up a listener for any future changes in storage
+    );
     const handleStorageChange = (changes, area) => {
-      if (area === "local" && changes.isLoggedIn) {
-        setIsLoggedIn(changes.isLoggedIn.newValue);
+      if (area === "local") {
+        if (changes.isGoogleLoggedIn)
+          setIsGoogleLoggedIn(!!changes.isGoogleLoggedIn.newValue);
+        if (changes.isGithubLoggedIn)
+          setIsGithubLoggedIn(!!changes.isGithubLoggedIn.newValue);
       }
     };
     chrome.storage.onChanged.addListener(handleStorageChange);
-
-    // Cleanup function to remove the listener when the component unmounts
-    return () => {
-      chrome.storage.onChanged.removeListener(handleStorageChange);
-    };
+    return () => chrome.storage.onChanged.removeListener(handleStorageChange);
   }, []);
 
-  const handleSummarizeClick = () => {
-    setIsLoading(true);
-    setLoadingAction("summarize");
-    setSummary("");
-    setError(null);
-    setDraftStatus("");
-    chrome.runtime.sendMessage({ action: "summarize_page" }, (response) => {
-      setIsLoading(false);
-      setLoadingAction("");
-      if (response.error) setError(response.error);
-      else if (response.summary) setSummary(response.summary);
-    });
-  };
+  useEffect(() => {
+    if (!isGithubLoggedIn) {
+      setLoading(false);
+      setNotifications([]);
+      return;
+    }
+    setLoading(true);
+    const q = query(
+      collection(db, "notifications"),
+      orderBy("timestamp", "desc")
+    );
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const newNotifications = querySnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        setNotifications(newNotifications);
+        setLoading(false);
+      },
+      (err) => {
+        setError("Could not connect to Firestore for notifications.");
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
+  }, [isGithubLoggedIn]);
 
-  const handleDraftEmailClick = () => {
-    setIsLoading(true);
-    setLoadingAction("draft");
-    setSummary("");
-    setError(null);
-    setDraftStatus("");
-    chrome.runtime.sendMessage({ action: "draft_email" }, (response) => {
-      setIsLoading(false);
-      setLoadingAction("");
-      if (response.error) setError(response.error);
-      else if (response.success) setDraftStatus(response.message);
-    });
-  };
-
-  const handleLoginClick = async () => {
-    try {
-      const response = await fetch("http://localhost:3001/api/auth/google");
-      const data = await response.json();
-      if (data.url) chrome.tabs.create({ url: data.url });
-    } catch (e) {
-      setError("Could not connect to the login service.");
+  const handleLoginClick = (service) => {
+    const url = `http://localhost:3001/api/auth/${service}`;
+    if (service === "github") {
+      window.location.href = url; // Redirect for GitHub
+    } else {
+      fetch(url)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.url) chrome.tabs.create({ url: data.url });
+        })
+        .catch(() =>
+          setError(`Could not connect to the ${service} login service.`)
+        );
     }
   };
 
-  const handleLogoutClick = () => {
-    // Clear the local storage which will trigger the UI update
-    chrome.storage.local.set({ isLoggedIn: false });
-    // Also tell the backend to clear its tokens (we'll build this next)
+  const handleAction = (action) => {
+    setIsLoadingAction(true);
+    setSummary("");
+    setError("");
+    chrome.runtime.sendMessage({ action }, (response) => {
+      if (response.error) setError(response.error);
+      else if (response.summary) setSummary(response.summary);
+      else if (response.message) setSummary(response.message);
+      setIsLoadingAction(false);
+    });
+  };
+
+  // **NEW:** Function to handle PR Review request
+  const handleReviewPR = async (prUrl) => {
+    setIsReviewLoading(true);
+    setIsReviewModalOpen(true);
+    setReviewContent("");
+    setError("");
+
+    try {
+      const response = await fetch(
+        "http://localhost:3001/api/github/pr/review",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ prUrl }),
+        }
+      );
+      const data = await response.json();
+      if (response.ok) {
+        setReviewContent(data.review);
+      } else {
+        throw new Error(data.error || "Failed to get review.");
+      }
+    } catch (err) {
+      setReviewContent(`Error: ${err.message}`);
+    } finally {
+      setIsReviewLoading(false);
+    }
+  };
+
+  const handleNotificationClick = (notification) => {
+    if (
+      notification.type === "pull_request" &&
+      notification.action === "opened"
+    ) {
+      handleReviewPR(notification.url);
+    } else {
+      window.open(notification.url, "_blank");
+    }
   };
 
   return (
     <div className="App">
       <header className="App-header">
         <h1>AlturaAI</h1>
-        {isLoggedIn ? (
-          <div>
-            <p className="welcome-message">Welcome!</p>
-            <button onClick={handleLogoutClick} className="logout-button">
-              Logout
+        <div className="auth-status">
+          {!isGoogleLoggedIn ? (
+            <button
+              onClick={() => handleLoginClick("google")}
+              className="login-button"
+            >
+              Login with Google
             </button>
-          </div>
-        ) : (
-          <button onClick={handleLoginClick} className="login-button">
-            Login with Google
-          </button>
-        )}
+          ) : (
+            <p className="status-ok">✔ Google Connected</p>
+          )}
+          {!isGithubLoggedIn ? (
+            <button
+              onClick={() => handleLoginClick("github")}
+              className="login-button"
+            >
+              Login with GitHub
+            </button>
+          ) : (
+            <p className="status-ok">✔ GitHub Connected</p>
+          )}
+        </div>
       </header>
       <main className="App-main">
         <div className="action-buttons">
           <button
-            onClick={handleSummarizeClick}
-            disabled={isLoading || !isLoggedIn}
+            onClick={() => handleAction("summarize_page")}
+            disabled={!isGoogleLoggedIn || isLoadingAction}
           >
-            {isLoading && loadingAction === "summarize"
-              ? "Summarizing..."
-              : "Summarize Page"}
+            Summarize Page
           </button>
           <button
-            onClick={handleDraftEmailClick}
-            disabled={isLoading || !isLoggedIn}
+            onClick={() => handleAction("draft_email")}
+            disabled={!isGoogleLoggedIn || isLoadingAction}
           >
-            {isLoading && loadingAction === "draft"
-              ? "Drafting..."
-              : "Draft Email"}
+            Draft Email
           </button>
         </div>
 
-        {draftStatus && <p className="success-message">{draftStatus}</p>}
-        {summary && (
-          <div className="summary-container">
-            <h3>Summary</h3>
-            <p className="summary-text">{summary}</p>
-          </div>
-        )}
-        {error && (
-          <p className="error-message" style={{ color: "red" }}>
-            {error}
-          </p>
+        {isLoadingAction && <p>Loading...</p>}
+        {error && <p className="error">{error}</p>}
+        {summary && <div className="summary-box">{summary}</div>}
+
+        <hr />
+
+        <h2>GitHub Feed</h2>
+        {isGithubLoggedIn ? (
+          loading ? (
+            <p>Loading feed...</p>
+          ) : notifications.length > 0 ? (
+            <ul className="notification-feed">
+              {notifications.map((notif) => (
+                <li
+                  key={notif.id}
+                  className={`notification-item ${
+                    notif.type === "pull_request" && notif.action === "opened"
+                      ? "clickable"
+                      : ""
+                  }`}
+                  onClick={() => handleNotificationClick(notif)}
+                >
+                  <p className="message">{notif.message}</p>
+                  <p className="meta">
+                    {notif.repo} -{" "}
+                    {new Date(notif.timestamp.seconds * 1000).toLocaleString()}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No new notifications. Push a commit or open a PR to test.</p>
+          )
+        ) : (
+          <p>Login with GitHub to see your feed.</p>
         )}
       </main>
+
+      {/* **NEW:** PR Review Modal */}
+      {isReviewModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <button
+              className="modal-close"
+              onClick={() => setIsReviewModalOpen(false)}
+            >
+              X
+            </button>
+            <h2>AI Pull Request Review</h2>
+            {isReviewLoading ? (
+              <p>Analyzing code changes...</p>
+            ) : (
+              <pre className="review-text">{reviewContent}</pre>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
