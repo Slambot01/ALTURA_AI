@@ -588,3 +588,11 @@ Complete server.js File
 12345678910111213141516171819202122232425262728
 // Import necessary packagesconst express = require('express');const cors = require('cors');require('dotenv').config();const { GoogleGenerativeAI } = require('@google/generative-ai');const { google } = require('googleapis');const admin = require('firebase-admin');const fetch = require('node-fetch');// --- Firebase Admin SDK Initialization ---const serviceAccount = require('./serviceAccountKey.json');admin.initializeApp({  credential: admin.credential.cert(serviceAccount)});const db = admin.firestore();// --- Basic Server Setup ---const app = express();app.use((req, res, next) => {  if (req.path === '/api/github/webhook') {    express.raw({ type: 'application/json' })(req, res, next);  } else {    express.json()(req, res, next);  }});app.use(cors());// --- Google AI & OAuth2 Setups ---
 
+const firebaseConfig = {
+  apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
+  authDomain: "alturaai.firebaseapp.com",
+  projectId: "alturaai",
+  storageBucket: "alturaai.firebasestorage.app",
+  messagingSenderId: "296537793338",
+  appId: "1:296537793338:web:00814e384e648d4cc46603"
+};

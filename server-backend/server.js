@@ -34,122 +34,11 @@
 // const PORT = process.env.PORT || 3001;
 
 // // --- Middleware ---
-// app.use((req, res, next) => {
-//   if (req.path === "/api/github/webhook") {
-//     express.raw({ type: "application/json" })(req, res, next);
-//   } else {
-//     express.json()(req, res, next);
-//   }
-// });
+// // **THE FIX:** Apply CORS first. Then, apply body parsers only to the routes that need them.
 // app.use(cors());
 
-// // --- AI API Routes ---
+// // --- Authentication Routes (No Body Parser Needed) ---
 
-// app.post("/api/summarize", async (req, res) => {
-//   try {
-//     const { text } = req.body;
-//     if (!text)
-//       return res.status(400).json({ error: "Text content is required." });
-//     const prompt = `Summarize the following text in a few concise paragraphs:\n\n${text}`;
-//     const result = await model.generateContent(prompt);
-//     const summary = result.response.text();
-//     res.json({ summary });
-//   } catch (error) {
-//     console.error("Error during summarization:", error);
-//     res.status(500).json({ error: "Failed to generate summary." });
-//   }
-// });
-
-// app.post("/api/gmail/draft", async (req, res) => {
-//   try {
-//     // NOTE: Using a single user document for simplicity. In a real app, you'd use the logged-in user's ID.
-//     const userDoc = await db.collection("users").doc("main_user").get();
-//     if (!userDoc.exists || !userDoc.data().google_tokens) {
-//       return res
-//         .status(401)
-//         .json({
-//           error: "User is not authenticated with Google or tokens are missing.",
-//         });
-//     }
-//     const userTokens = userDoc.data().google_tokens;
-//     googleOauth2Client.setCredentials(userTokens);
-
-//     const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
-//     const { pageContent } = req.body;
-//     if (!pageContent)
-//       return res.status(400).json({ error: "Page content is required." });
-
-//     const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
-//       0,
-//       4000
-//     )}"`;
-//     const aiResult = await model.generateContent(prompt);
-//     const jsonString = aiResult.response
-//       .text()
-//       .replace(/```json\n|```/g, "")
-//       .trim();
-//     const { subject, body } = JSON.parse(jsonString);
-
-//     const email = `Content-Type: text/plain; charset="UTF-8"\nMIME-Version: 1.0\nto: \nsubject: ${subject}\n\n${body}`;
-//     const base64EncodedEmail = Buffer.from(email)
-//       .toString("base64")
-//       .replace(/\+/g, "-")
-//       .replace(/\//g, "_");
-
-//     await gmail.users.drafts.create({
-//       userId: "me",
-//       requestBody: { message: { raw: base64EncodedEmail } },
-//     });
-//     res.json({ success: true, message: "Draft created successfully!" });
-//   } catch (error) {
-//     console.error("Error creating Gmail draft:", error);
-//     res.status(500).json({ error: "Failed to create draft." });
-//   }
-// });
-
-// // --- GitHub Webhook Route ---
-// app.post("/api/github/webhook", async (req, res) => {
-//   const eventType = req.headers["x-github-event"];
-//   const payload = JSON.parse(req.body);
-
-//   try {
-//     let notification = {
-//       type: eventType,
-//       repo: payload.repository.full_name,
-//       timestamp: new Date(),
-//       read: false,
-//     };
-
-//     if (eventType === "pull_request") {
-//       notification.action = payload.action;
-//       notification.title = payload.pull_request.title;
-//       notification.url = payload.pull_request.html_url;
-//       notification.sender = payload.sender.login;
-//       notification.message = `PR #${payload.pull_request.number} ${payload.action} by ${payload.sender.login}: "${payload.pull_request.title}"`;
-//     } else if (eventType === "push") {
-//       notification.ref = payload.ref;
-//       notification.pusher = payload.pusher.name;
-//       notification.url = payload.compare;
-//       notification.message = `Push to ${payload.ref.split("/").pop()} by ${
-//         payload.pusher.name
-//       } in ${payload.repository.name}`;
-//     } else {
-//       return res.status(200).send("Event received but not processed.");
-//     }
-
-//     await db.collection("notifications").add(notification);
-//     console.log("Notification saved to Firestore.");
-
-//     res.status(200).send("Notification received and processed.");
-//   } catch (error) {
-//     console.error("Error processing webhook or saving to Firestore:", error);
-//     res.status(500).send("Internal Server Error");
-//   }
-// });
-
-// // --- Authentication Routes ---
-
-// // Google Auth
 // app.get("/api/auth/google", (req, res) => {
 //   const scopes = [
 //     "https://www.googleapis.com/auth/userinfo.profile",
@@ -157,6 +46,7 @@
 //   ];
 //   const url = googleOauth2Client.generateAuthUrl({
 //     access_type: "offline",
+//     prompt: "consent",
 //     scope: scopes,
 //   });
 //   res.json({ url });
@@ -166,7 +56,6 @@
 //   const { code } = req.query;
 //   try {
 //     const { tokens } = await googleOauth2Client.getToken(code);
-//     // Using a single user doc for simplicity.
 //     await db
 //       .collection("users")
 //       .doc("main_user")
@@ -181,7 +70,6 @@
 //   }
 // });
 
-// // GitHub Auth
 // app.get("/api/auth/github", (req, res) => {
 //   const url = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=repo,user:email`;
 //   res.redirect(url);
@@ -213,7 +101,6 @@
 //     });
 //     const githubUser = await userResponse.json();
 
-//     // Use a single user doc for simplicity
 //     await db.collection("users").doc("main_user").set(
 //       {
 //         github_access_token: accessToken,
@@ -231,7 +118,6 @@
 //   }
 // });
 
-// // Auth Status Check
 // app.get("/api/auth/status", async (req, res) => {
 //   try {
 //     const userDoc = await db.collection("users").doc("main_user").get();
@@ -245,6 +131,180 @@
 //     });
 //   } catch (error) {
 //     res.status(500).json({ error: "Failed to check auth status." });
+//   }
+// });
+
+// // --- API Routes that NEED a Body Parser ---
+
+// // This special raw body parser is ONLY for the webhook
+// app.post(
+//   "/api/github/webhook",
+//   express.raw({ type: "application/json" }),
+//   async (req, res) => {
+//     const eventType = req.headers["x-github-event"];
+//     const payload = JSON.parse(req.body);
+
+//     try {
+//       let notification = {
+//         type: eventType,
+//         repo: payload.repository.full_name,
+//         timestamp: new Date(),
+//         read: false,
+//       };
+
+//       if (eventType === "pull_request") {
+//         notification.action = payload.action;
+//         notification.title = payload.pull_request.title;
+//         notification.url = payload.pull_request.html_url;
+//         notification.sender = payload.sender.login;
+//         notification.message = `PR #${payload.pull_request.number} ${payload.action} by ${payload.sender.login}: "${payload.pull_request.title}"`;
+//       } else if (eventType === "push") {
+//         notification.ref = payload.ref;
+//         notification.pusher = payload.pusher.name;
+//         notification.url = payload.compare;
+//         notification.message = `Push to ${payload.ref.split("/").pop()} by ${
+//           payload.pusher.name
+//         } in ${payload.repository.name}`;
+//       } else {
+//         return res.status(200).send("Event received but not processed.");
+//       }
+
+//       await db.collection("notifications").add(notification);
+//       console.log("Notification saved to Firestore.");
+
+//       res.status(200).send("Notification received and processed.");
+//     } catch (error) {
+//       console.error("Error processing webhook or saving to Firestore:", error);
+//       res.status(500).send("Internal Server Error");
+//     }
+//   }
+// );
+
+// // Use the standard JSON parser for all other POST routes
+// app.use(express.json());
+
+// app.post("/api/summarize", async (req, res) => {
+//   try {
+//     const { text } = req.body;
+//     if (!text)
+//       return res.status(400).json({ error: "Text content is required." });
+//     const prompt = `Summarize the following text in a few concise paragraphs:\n\n${text}`;
+//     const result = await model.generateContent(prompt);
+//     const summary = result.response.text();
+//     res.json({ summary });
+//   } catch (error) {
+//     console.error("Error during summarization:", error);
+//     res.status(500).json({ error: "Failed to generate summary." });
+//   }
+// });
+
+// app.post("/api/gmail/draft", async (req, res) => {
+//   try {
+//     const userDoc = await db.collection("users").doc("main_user").get();
+//     if (!userDoc.exists || !userDoc.data().google_tokens) {
+//       return res
+//         .status(401)
+//         .json({
+//           error: "User is not authenticated with Google or tokens are missing.",
+//         });
+//     }
+//     const userTokens = userDoc.data().google_tokens;
+//     googleOauth2Client.setCredentials(userTokens);
+
+//     const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
+//     const { pageContent } = req.body;
+//     if (!pageContent)
+//       return res.status(400).json({ error: "Page content is required." });
+
+//     const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
+//       0,
+//       4000
+//     )}"`;
+//     const aiResult = await model.generateContent(prompt);
+//     const aiResponseText = aiResult.response.text();
+
+//     let subject, body;
+//     try {
+//       const jsonString = aiResponseText.replace(/```json\n|```/g, "").trim();
+//       const parsedJson = JSON.parse(jsonString);
+//       subject = parsedJson.subject;
+//       body = parsedJson.body;
+//     } catch (parseError) {
+//       console.error("Failed to parse AI response as JSON:", aiResponseText);
+//       return res
+//         .status(500)
+//         .json({
+//           error:
+//             "AI response was not in the expected format. Please try again.",
+//         });
+//     }
+
+//     const email = `Content-Type: text/plain; charset="UTF-8"\nMIME-Version: 1.0\nto: \nsubject: ${subject}\n\n${body}`;
+//     const base64EncodedEmail = Buffer.from(email)
+//       .toString("base64")
+//       .replace(/\+/g, "-")
+//       .replace(/\//g, "_");
+
+//     await gmail.users.drafts.create({
+//       userId: "me",
+//       requestBody: { message: { raw: base64EncodedEmail } },
+//     });
+//     res.json({ success: true, message: "Draft created successfully!" });
+//   } catch (error) {
+//     console.error("Error creating Gmail draft:", error);
+//     res.status(500).json({ error: "Failed to create draft." });
+//   }
+// });
+
+// app.post("/api/github/pr/review", async (req, res) => {
+//   const { prUrl } = req.body;
+//   if (!prUrl) {
+//     return res.status(400).json({ error: "Pull Request URL is required." });
+//   }
+
+//   try {
+//     const userDoc = await db.collection("users").doc("main_user").get();
+//     if (!userDoc.exists || !userDoc.data().github_access_token) {
+//       return res.status(401).json({ error: "GitHub token not found." });
+//     }
+//     const accessToken = userDoc.data().github_access_token;
+//     const apiUrl = prUrl
+//       .replace("github.com", "api.github.com/repos")
+//       .replace("/pull/", "/pulls/");
+//     const diffResponse = await fetch(apiUrl, {
+//       headers: {
+//         Authorization: `token ${accessToken}`,
+//         Accept: "application/vnd.github.v3.diff",
+//       },
+//     });
+
+//     if (!diffResponse.ok) {
+//       throw new Error(`Failed to fetch PR diff: ${diffResponse.statusText}`);
+//     }
+//     const diffText = await diffResponse.text();
+//     const prompt = `You are an expert code reviewer. Please review the following code changes (in .diff format) and provide a concise summary of potential issues, bugs, or style improvements. Be specific and provide code examples if necessary.\n\nDiff:\n${diffText}`;
+//     const result = await model.generateContent(prompt);
+//     const review = result.response.text();
+
+//     res.json({ review });
+//   } catch (error) {
+//     console.error("Error generating PR review:", error);
+//     res.status(500).json({ error: "Failed to generate PR review." });
+//   }
+// });
+
+// app.post("/api/logout", async (req, res) => {
+//   try {
+//     const userRef = db.collection("users").doc("main_user");
+//     await userRef.update({
+//       google_tokens: admin.firestore.FieldValue.delete(),
+//       github_access_token: admin.firestore.FieldValue.delete(),
+//     });
+//     console.log("User tokens deleted.");
+//     res.json({ success: true, message: "Logged out successfully." });
+//   } catch (error) {
+//     console.error("Error during logout:", error);
+//     res.status(500).json({ error: "Logout failed." });
 //   }
 // });
 
@@ -287,168 +347,10 @@ const CHROME_EXTENSION_ID = process.env.CHROME_EXTENSION_ID;
 const app = express();
 const PORT = process.env.PORT || 3001;
 
-// --- Middleware ---
-app.use((req, res, next) => {
-  if (req.path === "/api/github/webhook") {
-    express.raw({ type: "application/json" })(req, res, next);
-  } else {
-    express.json()(req, res, next);
-  }
-});
+// --- Global Middleware ---
 app.use(cors());
 
-// --- AI API Routes ---
-
-app.post("/api/summarize", async (req, res) => {
-  try {
-    const { text } = req.body;
-    if (!text)
-      return res.status(400).json({ error: "Text content is required." });
-    const prompt = `Summarize the following text in a few concise paragraphs:\n\n${text}`;
-    const result = await model.generateContent(prompt);
-    const summary = result.response.text();
-    res.json({ summary });
-  } catch (error) {
-    console.error("Error during summarization:", error);
-    res.status(500).json({ error: "Failed to generate summary." });
-  }
-});
-
-app.post("/api/gmail/draft", async (req, res) => {
-  try {
-    const userDoc = await db.collection("users").doc("main_user").get();
-    if (!userDoc.exists || !userDoc.data().google_tokens) {
-      return res
-        .status(401)
-        .json({
-          error: "User is not authenticated with Google or tokens are missing.",
-        });
-    }
-    const userTokens = userDoc.data().google_tokens;
-    googleOauth2Client.setCredentials(userTokens);
-
-    const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
-    const { pageContent } = req.body;
-    if (!pageContent)
-      return res.status(400).json({ error: "Page content is required." });
-
-    const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
-      0,
-      4000
-    )}"`;
-    const aiResult = await model.generateContent(prompt);
-    const jsonString = aiResult.response
-      .text()
-      .replace(/```json\n|```/g, "")
-      .trim();
-    const { subject, body } = JSON.parse(jsonString);
-
-    const email = `Content-Type: text/plain; charset="UTF-8"\nMIME-Version: 1.0\nto: \nsubject: ${subject}\n\n${body}`;
-    const base64EncodedEmail = Buffer.from(email)
-      .toString("base64")
-      .replace(/\+/g, "-")
-      .replace(/\//g, "_");
-
-    await gmail.users.drafts.create({
-      userId: "me",
-      requestBody: { message: { raw: base64EncodedEmail } },
-    });
-    res.json({ success: true, message: "Draft created successfully!" });
-  } catch (error) {
-    console.error("Error creating Gmail draft:", error);
-    res.status(500).json({ error: "Failed to create draft." });
-  }
-});
-
-// --- GitHub Webhook & API Routes ---
-
-// **NEW:** AI-Powered PR Review Route
-app.post("/api/github/pr/review", async (req, res) => {
-  const { prUrl } = req.body;
-  if (!prUrl) {
-    return res.status(400).json({ error: "Pull Request URL is required." });
-  }
-
-  try {
-    // Fetch the GitHub access token from Firestore
-    const userDoc = await db.collection("users").doc("main_user").get();
-    if (!userDoc.exists || !userDoc.data().github_access_token) {
-      return res.status(401).json({ error: "GitHub token not found." });
-    }
-    const accessToken = userDoc.data().github_access_token;
-
-    // The GitHub API endpoint for a PR diff is different from the HTML URL.
-    // We need to convert https://github.com/owner/repo/pull/123
-    // to https://api.github.com/repos/owner/repo/pulls/123
-    const apiUrl = prUrl
-      .replace("github.com", "api.github.com/repos")
-      .replace("/pull/", "/pulls/");
-
-    // Fetch the diff content using the GitHub API
-    const diffResponse = await fetch(apiUrl, {
-      headers: {
-        Authorization: `token ${accessToken}`,
-        Accept: "application/vnd.github.v3.diff", // This special header gets the diff format
-      },
-    });
-
-    if (!diffResponse.ok) {
-      throw new Error(`Failed to fetch PR diff: ${diffResponse.statusText}`);
-    }
-    const diffText = await diffResponse.text();
-
-    // Generate the AI review
-    const prompt = `You are an expert code reviewer. Please review the following code changes (in .diff format) and provide a concise summary of potential issues, bugs, or style improvements. Be specific and provide code examples if necessary.\n\nDiff:\n${diffText}`;
-    const result = await model.generateContent(prompt);
-    const review = result.response.text();
-
-    res.json({ review });
-  } catch (error) {
-    console.error("Error generating PR review:", error);
-    res.status(500).json({ error: "Failed to generate PR review." });
-  }
-});
-
-app.post("/api/github/webhook", async (req, res) => {
-  const eventType = req.headers["x-github-event"];
-  const payload = JSON.parse(req.body);
-
-  try {
-    let notification = {
-      type: eventType,
-      repo: payload.repository.full_name,
-      timestamp: new Date(),
-      read: false,
-    };
-
-    if (eventType === "pull_request") {
-      notification.action = payload.action;
-      notification.title = payload.pull_request.title;
-      notification.url = payload.pull_request.html_url;
-      notification.sender = payload.sender.login;
-      notification.message = `PR #${payload.pull_request.number} ${payload.action} by ${payload.sender.login}: "${payload.pull_request.title}"`;
-    } else if (eventType === "push") {
-      notification.ref = payload.ref;
-      notification.pusher = payload.pusher.name;
-      notification.url = payload.compare;
-      notification.message = `Push to ${payload.ref.split("/").pop()} by ${
-        payload.pusher.name
-      } in ${payload.repository.name}`;
-    } else {
-      return res.status(200).send("Event received but not processed.");
-    }
-
-    await db.collection("notifications").add(notification);
-    console.log("Notification saved to Firestore.");
-
-    res.status(200).send("Notification received and processed.");
-  } catch (error) {
-    console.error("Error processing webhook or saving to Firestore:", error);
-    res.status(500).send("Internal Server Error");
-  }
-});
-
-// --- Authentication Routes ---
+// --- Authentication Routes (These do NOT need a body parser) ---
 
 app.get("/api/auth/google", (req, res) => {
   const scopes = [
@@ -457,6 +359,7 @@ app.get("/api/auth/google", (req, res) => {
   ];
   const url = googleOauth2Client.generateAuthUrl({
     access_type: "offline",
+    prompt: "consent",
     scope: scopes,
   });
   res.json({ url });
@@ -481,6 +384,7 @@ app.get("/api/auth/google/callback", async (req, res) => {
 });
 
 app.get("/api/auth/github", (req, res) => {
+  console.log("--- DEBUG: /api/auth/github route hit! ---"); // Added for debugging
   const url = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=repo,user:email`;
   res.redirect(url);
 });
@@ -541,6 +445,173 @@ app.get("/api/auth/status", async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to check auth status." });
+  }
+});
+
+// --- API Routes that DO need a body parser ---
+
+// This special raw body parser is ONLY for the webhook
+app.post(
+  "/api/github/webhook",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    const eventType = req.headers["x-github-event"];
+    const payload = JSON.parse(req.body);
+
+    try {
+      let notification = {
+        type: eventType,
+        repo: payload.repository.full_name,
+        timestamp: new Date(),
+        read: false,
+      };
+
+      if (eventType === "pull_request") {
+        notification.action = payload.action;
+        notification.title = payload.pull_request.title;
+        notification.url = payload.pull_request.html_url;
+        notification.sender = payload.sender.login;
+        notification.message = `PR #${payload.pull_request.number} ${payload.action} by ${payload.sender.login}: "${payload.pull_request.title}"`;
+      } else if (eventType === "push") {
+        notification.ref = payload.ref;
+        notification.pusher = payload.pusher.name;
+        notification.url = payload.compare;
+        notification.message = `Push to ${payload.ref.split("/").pop()} by ${
+          payload.pusher.name
+        } in ${payload.repository.name}`;
+      } else {
+        return res.status(200).send("Event received but not processed.");
+      }
+
+      await db.collection("notifications").add(notification);
+      console.log("Notification saved to Firestore.");
+
+      res.status(200).send("Notification received and processed.");
+    } catch (error) {
+      console.error("Error processing webhook or saving to Firestore:", error);
+      res.status(500).send("Internal Server Error");
+    }
+  }
+);
+
+// Use the standard JSON parser for all other POST routes that need it
+app.post("/api/summarize", express.json(), async (req, res) => {
+  try {
+    const { text } = req.body;
+    if (!text)
+      return res.status(400).json({ error: "Text content is required." });
+    const prompt = `Summarize the following text in a few concise paragraphs:\n\n${text}`;
+    const result = await model.generateContent(prompt);
+    const summary = result.response.text();
+    res.json({ summary });
+  } catch (error) {
+    console.error("Error during summarization:", error);
+    res.status(500).json({ error: "Failed to generate summary." });
+  }
+});
+
+app.post("/api/gmail/draft", express.json(), async (req, res) => {
+  try {
+    const userDoc = await db.collection("users").doc("main_user").get();
+    if (!userDoc.exists || !userDoc.data().google_tokens) {
+      return res.status(401).json({
+        error: "User is not authenticated with Google or tokens are missing.",
+      });
+    }
+    const userTokens = userDoc.data().google_tokens;
+    googleOauth2Client.setCredentials(userTokens);
+
+    const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
+    const { pageContent } = req.body;
+    if (!pageContent)
+      return res.status(400).json({ error: "Page content is required." });
+
+    const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
+      0,
+      4000
+    )}"`;
+    const aiResult = await model.generateContent(prompt);
+    const aiResponseText = aiResult.response.text();
+
+    let subject, body;
+    try {
+      const jsonString = aiResponseText.replace(/```json\n|```/g, "").trim();
+      const parsedJson = JSON.parse(jsonString);
+      subject = parsedJson.subject;
+      body = parsedJson.body;
+    } catch (parseError) {
+      console.error("Failed to parse AI response as JSON:", aiResponseText);
+      return res.status(500).json({
+        error: "AI response was not in the expected format. Please try again.",
+      });
+    }
+
+    const email = `Content-Type: text/plain; charset="UTF-8"\nMIME-Version: 1.0\nto: \nsubject: ${subject}\n\n${body}`;
+    const base64EncodedEmail = Buffer.from(email)
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_");
+
+    await gmail.users.drafts.create({
+      userId: "me",
+      requestBody: { message: { raw: base64EncodedEmail } },
+    });
+    res.json({ success: true, message: "Draft created successfully!" });
+  } catch (error) {
+    console.error("Error creating Gmail draft:", error);
+    res.status(500).json({ error: "Failed to create draft." });
+  }
+});
+
+app.post("/api/github/pr/review", express.json(), async (req, res) => {
+  const { prUrl } = req.body;
+  if (!prUrl) {
+    return res.status(400).json({ error: "Pull Request URL is required." });
+  }
+
+  try {
+    const userDoc = await db.collection("users").doc("main_user").get();
+    if (!userDoc.exists || !userDoc.data().github_access_token) {
+      return res.status(401).json({ error: "GitHub token not found." });
+    }
+    const accessToken = userDoc.data().github_access_token;
+    const apiUrl = prUrl
+      .replace("github.com", "api.github.com/repos")
+      .replace("/pull/", "/pulls/");
+    const diffResponse = await fetch(apiUrl, {
+      headers: {
+        Authorization: `token ${accessToken}`,
+        Accept: "application/vnd.github.v3.diff",
+      },
+    });
+
+    if (!diffResponse.ok) {
+      throw new Error(`Failed to fetch PR diff: ${diffResponse.statusText}`);
+    }
+    const diffText = await diffResponse.text();
+    const prompt = `You are an expert code reviewer. Please review the following code changes (in .diff format) and provide a concise summary of potential issues, bugs, or style improvements. Be specific and provide code examples if necessary.\n\nDiff:\n${diffText}`;
+    const result = await model.generateContent(prompt);
+    const review = result.response.text();
+
+    res.json({ review });
+  } catch (error) {
+    console.error("Error generating PR review:", error);
+    res.status(500).json({ error: "Failed to generate PR review." });
+  }
+});
+
+app.post("/api/logout", express.json(), async (req, res) => {
+  try {
+    const userRef = db.collection("users").doc("main_user");
+    await userRef.update({
+      google_tokens: admin.firestore.FieldValue.delete(),
+      github_access_token: admin.firestore.FieldValue.delete(),
+    });
+    console.log("User tokens deleted.");
+    res.json({ success: true, message: "Logged out successfully." });
+  } catch (error) {
+    console.error("Error during logout:", error);
+    res.status(500).json({ error: "Logout failed." });
   }
 });
 

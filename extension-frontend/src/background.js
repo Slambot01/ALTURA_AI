@@ -41,8 +41,7 @@ chrome.action.onClicked.addListener((tab) => {
   });
 });
 
-// **NEW:** Listen for when the dashboard tab is loaded or updated.
-// This is a more reliable way to ensure the auth status is fresh after a login redirect.
+// Listen for when the dashboard tab is loaded or updated.
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   const dashboardUrl = chrome.runtime.getURL("dashboard.html");
   if (tab.url?.startsWith(dashboardUrl) && changeInfo.status === "complete") {
@@ -62,8 +61,15 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 1. Get the active tab to find its content
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs[0];
-      if (!activeTab || !activeTab.id) {
-        sendResponse({ error: "Could not find an active tab." });
+      if (
+        !activeTab ||
+        !activeTab.id ||
+        activeTab.url?.startsWith("chrome://")
+      ) {
+        sendResponse({
+          error:
+            "Cannot access content on this page (e.g., new tab, settings).",
+        });
         return;
       }
 
@@ -74,11 +80,14 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           function: () => document.body.innerText,
         },
         (injectionResults) => {
-          if (
-            chrome.runtime.lastError ||
-            !injectionResults ||
-            injectionResults.length === 0
-          ) {
+          // **IMPROVED ERROR HANDLING**
+          if (chrome.runtime.lastError) {
+            sendResponse({
+              error: `Script injection failed: ${chrome.runtime.lastError.message}`,
+            });
+            return;
+          }
+          if (!injectionResults || injectionResults.length === 0) {
             sendResponse({
               error: "Could not get page content. Try refreshing the page.",
             });
@@ -86,7 +95,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           }
 
           const pageContent = injectionResults[0].result;
-          if (!pageContent) {
+          if (!pageContent || pageContent.trim() === "") {
             sendResponse({
               error: "Page is empty or content is not accessible.",
             });
