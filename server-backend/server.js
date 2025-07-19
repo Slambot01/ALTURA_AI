@@ -140,7 +140,7 @@ app.get("/api/notifications", async (req, res) => {
 // --- Webhook Route (Requires Raw Body Parser) ---
 app.post(
   "/api/github/webhook",
-  express.raw({ type: "application/json" }),
+  express.raw({ type: "application/json", limit: "5mb" }), // <-- FIXED: Increased limit
   async (req, res) => {
     const githubEvent = req.headers["x-github-event"];
     const data = JSON.parse(req.body);
@@ -175,7 +175,7 @@ app.post(
 );
 
 // --- Action Routes (Requires JSON Body Parser) ---
-app.use(express.json());
+app.use(express.json({ limit: "5mb" })); // <-- FIXED: Increased limit
 
 app.post("/api/logout", async (req, res) => {
   try {
@@ -280,10 +280,12 @@ app.post("/api/notion/create", async (req, res) => {
     return res.status(400).json({ error: "Page content is required." });
   }
   try {
-    const prompt = `Based on the following text, generate a suitable title and format the main content for a Notion document. The content should be well-structured with headings and bullet points where appropriate. Format the output as a JSON object with "title" and "content" keys. Text: "${pageContent.substring(
+    // FIXED: Simplified the prompt to ask for a plain text summary, which is a valid string.
+    const prompt = `Generate a suitable title and a plain text summary for a Notion document based on the following content. Format the output as a JSON object with "title" and "content" keys. The content should be a single string. Text: "${pageContent.substring(
       0,
       4000
     )}"`;
+
     const aiResult = await model.generateContent(prompt);
     const jsonString = aiResult.response
       .text()
@@ -300,7 +302,9 @@ app.post("/api/notion/create", async (req, res) => {
         {
           object: "block",
           type: "paragraph",
-          paragraph: { rich_text: [{ type: "text", text: { content } }] },
+          paragraph: {
+            rich_text: [{ type: "text", text: { content: content } }],
+          }, // <-- content is now a valid string
         },
       ],
     });
@@ -368,19 +372,32 @@ app.post("/api/research/start", async (req, res) => {
     // 2. Immediately respond to the UI so it doesn't have to wait
     res.json({ success: true, message: `Research on "${topic}" has started.` });
 
-    // 3. In the future, we will perform the AI research here.
-    // For now, we'll simulate a delay and then update the status.
-    setTimeout(async () => {
-      // TODO: Replace this with a real Gemini API call for research
-      const fakeResult = `This is a placeholder research summary for the topic: "${topic}". The real AI call will go here once the API quota is available.`;
+    // 3. Perform the actual AI research in the background
+    (async () => {
+      try {
+        console.log(`Performing AI research for task ${taskRef.id}...`);
+        const prompt = `Please conduct thorough research on the following topic and provide a detailed, well-structured summary. Include key points, relevant data, and a concluding paragraph. Topic: "${topic}"`;
 
-      await taskRef.update({
-        status: "completed",
-        result: fakeResult,
-        completedAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      console.log(`Research task ${taskRef.id} has been completed.`);
-    }, 15000); // Simulate a 15-second research task
+        const result = await model.generateContent(prompt);
+        const researchSummary = result.response.text();
+
+        await taskRef.update({
+          status: "completed",
+          result: researchSummary,
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        console.log(
+          `Research task ${taskRef.id} has been completed with real data.`
+        );
+      } catch (aiError) {
+        console.error(`AI research failed for task ${taskRef.id}:`, aiError);
+        await taskRef.update({
+          status: "failed",
+          error: "The AI failed to generate a response.",
+          completedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    })();
   } catch (error) {
     console.error("Error starting research task:", error);
     res.status(500).json({ error: "Failed to start research task." });

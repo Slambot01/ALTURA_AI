@@ -10,9 +10,8 @@ import {
 import "./App.css";
 
 // --- Firebase Configuration ---
-// This is necessary for the frontend to listen to real-time database updates.
-// Replace with your actual Firebase config.
-
+// IMPORTANT: Replace these placeholder values with your actual Firebase project's configuration.
+// You can find this in your Firebase project settings.
 const firebaseConfig = {
   apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
   authDomain: "alturaai.firebaseapp.com",
@@ -22,7 +21,7 @@ const firebaseConfig = {
   appId: "1:296537793338:web:00814e384e648d4cc46603",
 };
 
-// Initialize Firebase
+// Initialize Firebase for the frontend
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
@@ -108,7 +107,7 @@ function App() {
     return () => clearInterval(intervalId);
   }, [isGithubLoggedIn]);
 
-  // --- NEW: Effect for Listening to Research Tasks ---
+  // --- NEW: Effect for Listening to Research Tasks in Real-Time ---
   useEffect(() => {
     const q = query(
       collection(db, "research_tasks"),
@@ -123,7 +122,8 @@ function App() {
       setResearchTasks(tasks);
     });
 
-    return () => unsubscribe(); // Cleanup the listener when the component unmounts
+    // Cleanup the listener when the component unmounts
+    return () => unsubscribe();
   }, []);
 
   // --- Action Handlers ---
@@ -420,6 +420,9 @@ function App() {
                   </div>
                   {task.status === "completed" && (
                     <p className="task-result">{task.result}</p>
+                  )}
+                  {task.status === "failed" && (
+                    <p className="task-result error">{task.error}</p>
                   )}
                 </li>
               ))}

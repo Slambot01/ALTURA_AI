@@ -1,0 +1,8 @@
+const firebaseConfig = {
+  apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
+  authDomain: "alturaai.firebaseapp.com",
+  projectId: "alturaai",
+  storageBucket: "alturaai.firebasestorage.app",
+  messagingSenderId: "296537793338",
+  appId: "1:296537793338:web:00814e384e648d4cc46603",
+};
