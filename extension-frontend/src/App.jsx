@@ -14,18 +14,40 @@ function App() {
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
   const [reviewContent, setReviewContent] = useState("");
   const [isReviewLoading, setIsReviewLoading] = useState(false);
-
-  // NEW: State for calendar feature
   const [meetingSlots, setMeetingSlots] = useState([]);
   const [isFindingTimes, setIsFindingTimes] = useState(false);
 
   const isExtension =
     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
 
-  // This useEffect handles checking auth status
+  // Function to check auth status from server
+  const checkAuthStatus = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/auth/status");
+      const data = await response.json();
+      setIsGoogleLoggedIn(!!data.isGoogleLoggedIn);
+      setIsGithubLoggedIn(!!data.isGithubLoggedIn);
+
+      // Also update Chrome storage to keep it in sync
+      if (isExtension) {
+        chrome.storage.local.set({
+          isGoogleLoggedIn: !!data.isGoogleLoggedIn,
+          isGithubLoggedIn: !!data.isGithubLoggedIn,
+        });
+      }
+    } catch (err) {
+      console.error("Error checking auth status:", err);
+    }
+  };
+
   useEffect(() => {
+    // Initial auth status check
+    checkAuthStatus();
+
     if (isExtension) {
       chrome.runtime.sendMessage({ action: "check_auth_status" });
+
+      // Get initial state from Chrome storage
       chrome.storage.local.get(
         ["isGoogleLoggedIn", "isGithubLoggedIn"],
         (result) => {
@@ -33,20 +55,28 @@ function App() {
           setIsGithubLoggedIn(!!result.isGithubLoggedIn);
         }
       );
+
+      // Listen for storage changes
       const handleStorageChange = (changes, area) => {
         if (area === "local") {
-          if (changes.isGoogleLoggedIn)
+          if (changes.isGoogleLoggedIn) {
             setIsGoogleLoggedIn(!!changes.isGoogleLoggedIn.newValue);
-          if (changes.isGithubLoggedIn)
+          }
+          if (changes.isGithubLoggedIn) {
             setIsGithubLoggedIn(!!changes.isGithubLoggedIn.newValue);
+          }
         }
       };
+
       chrome.storage.onChanged.addListener(handleStorageChange);
       return () => chrome.storage.onChanged.removeListener(handleStorageChange);
     }
-  }, []);
 
-  // This useEffect securely fetches notifications from the backend
+    // Set up periodic auth status check (every 30 seconds)
+    const authCheckInterval = setInterval(checkAuthStatus, 30000);
+    return () => clearInterval(authCheckInterval);
+  }, [isExtension]);
+
   useEffect(() => {
     if (!isGithubLoggedIn) {
       setLoading(false);
@@ -71,14 +101,17 @@ function App() {
     return () => clearInterval(intervalId);
   }, [isGithubLoggedIn]);
 
-  // --- Action Handlers ---
-
   const handleLoginClick = async (service) => {
     try {
       const response = await fetch(`http://localhost:3001/api/auth/${service}`);
       const data = await response.json();
       if (data.url) {
-        chrome.tabs.create({ url: data.url });
+        if (isExtension) {
+          chrome.tabs.create({ url: data.url });
+          window.close(); // This closes the popup after opening the login tab
+        } else {
+          window.open(data.url, "_blank");
+        }
       }
     } catch (e) {
       setError(`Could not connect to the ${service} login service.`);
@@ -91,6 +124,7 @@ function App() {
     setSummary("");
     setError("");
     setActionStatus("");
+    setMeetingSlots([]);
     chrome.runtime.sendMessage({ action }, (response) => {
       if (response.error) setError(response.error);
       else if (response.summary) setSummary(response.summary);
@@ -139,10 +173,16 @@ function App() {
         headers: { "Content-Type": "application/json" },
       });
       if (response.ok) {
-        chrome.storage.local.set({
-          isGoogleLoggedIn: false,
-          isGithubLoggedIn: false,
-        });
+        // Update both React state and Chrome storage
+        setIsGoogleLoggedIn(false);
+        setIsGithubLoggedIn(false);
+
+        if (isExtension) {
+          chrome.storage.local.set({
+            isGoogleLoggedIn: false,
+            isGithubLoggedIn: false,
+          });
+        }
       } else {
         const data = await response.json();
         throw new Error(data.error || "Logout failed");
@@ -152,7 +192,6 @@ function App() {
     }
   };
 
-  // --- NEW: Calendar Handler ---
   const handleFindMeetingTimes = async () => {
     setIsFindingTimes(true);
     setMeetingSlots([]);
@@ -171,7 +210,6 @@ function App() {
         throw new Error(data.error || "Failed to get calendar data.");
       }
 
-      // Process busy times to find free slots
       const freeSlots = findFreeSlots(data.busyTimes);
       setMeetingSlots(freeSlots);
     } catch (err) {
@@ -181,7 +219,6 @@ function App() {
     }
   };
 
-  // --- Helper Function to Find Free Slots ---
   const findFreeSlots = (busyTimes) => {
     const freeSlots = [];
     const now = new Date();
@@ -189,13 +226,10 @@ function App() {
     endOfWeek.setDate(now.getDate() + 7);
 
     let currentTime = new Date(now);
-
-    // Start from the next round hour
     currentTime.setMinutes(0, 0, 0);
     currentTime.setHours(currentTime.getHours() + 1);
 
     while (currentTime < endOfWeek && freeSlots.length < 10) {
-      // Only consider working hours (e.g., 9 AM to 5 PM) and weekdays (Monday=1 to Friday=5)
       const dayOfWeek = currentTime.getDay();
       if (
         currentTime.getHours() >= 9 &&
@@ -210,7 +244,6 @@ function App() {
         for (const busy of busyTimes) {
           const busyStart = new Date(busy.start);
           const busyEnd = new Date(busy.end);
-          // Check for overlap
           if (currentTime < busyEnd && slotEnd > busyStart) {
             isBusy = true;
             break;
@@ -221,16 +254,14 @@ function App() {
           freeSlots.push(new Date(currentTime));
         }
       }
-      // Move to the next hour
       currentTime.setHours(currentTime.getHours() + 1);
 
-      // If it's the end of the workday, jump to the next morning
       if (currentTime.getHours() >= 17) {
         currentTime.setDate(currentTime.getDate() + 1);
         currentTime.setHours(9, 0, 0, 0);
       }
     }
-    return freeSlots; // Return up to 10 available slots
+    return freeSlots;
   };
 
   return (

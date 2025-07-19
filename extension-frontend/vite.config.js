@@ -13,7 +13,7 @@ export default defineConfig({
       input: {
         // The popup is the default entry point
         popup: resolve(__dirname, "index.html"),
-        // NEW: Add the auth success page as an entry point
+        // The auth success page is a separate entry point
         authSuccess: resolve(__dirname, "auth-success.html"),
         // Specify the background script as a separate entry point
         background: resolve(__dirname, "src/background.js"),

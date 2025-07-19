@@ -1,21 +1,34 @@
 {
   "manifest_version": 3,
-  "name": "AlturaAI Copilot",
-  "version": "0.1.0",
-  "description": "Your AI-powered browser assistant.",
-  "permissions": ["activeTab", "storage", "scripting", "alarms"],
-  "host_permissions": ["<all_urls>"],
-  "action": {
-    "default_popup": "index.html"
-  },
+  "name": "AlturaAI",
+  "description": "GitHub + Google automation with AI",
+  "version": "1.0",
+  "permissions": ["storage", "identity", "tabs", "scripting"],
+  "host_permissions": ["http://localhost:3001/*", "<all_urls>"],
   "background": {
     "service_worker": "background.js",
     "type": "module"
   },
+  "action": {
+    "default_popup": "index.html",
+    "default_icon": "vite.svg"
+  },
+  "icons": {
+    "16": "vite.svg",
+    "48": "vite.svg",
+    "128": "vite.svg"
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["vite.svg"],
+      "matches": ["<all_urls>"]
     }
   ]
 }

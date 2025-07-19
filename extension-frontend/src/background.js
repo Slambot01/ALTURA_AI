@@ -5,13 +5,16 @@ const BACKEND_URL = "http://localhost:3001";
 const checkAuthStatus = async () => {
   try {
     const response = await fetch(`${BACKEND_URL}/api/auth/status`);
+    if (!response.ok) {
+      throw new Error(`Server responded with status: ${response.status}`);
+    }
     const data = await response.json();
     // Save the status to storage. This will trigger the listener in App.jsx.
     chrome.storage.local.set({
       isGoogleLoggedIn: data.isGoogleLoggedIn,
       isGithubLoggedIn: data.isGithubLoggedIn,
     });
-    console.log("Auth status checked:", data);
+    console.log("Auth status checked and updated:", data);
   } catch (error) {
     console.error("Could not check auth status:", error);
     // If we can't connect, assume logged out.
@@ -22,14 +25,33 @@ const checkAuthStatus = async () => {
   }
 };
 
-// Check when the extension is first installed.
+// --- Listeners to Trigger Auth Check ---
+
+// 1. Check when the extension is first installed.
 chrome.runtime.onInstalled.addListener(() => {
+  console.log("AlturaAI extension installed. Checking auth status.");
   checkAuthStatus();
+});
+
+// 2. Check whenever a tab is updated. This is a more reliable way
+//    to catch the "Authentication Successful" page loading and closing.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (
+    changeInfo.status === "complete" &&
+    tab.url &&
+    (tab.url.includes("localhost:3001/api/auth/google/callback") ||
+      tab.url.includes("localhost:3001/api/auth/github/callback"))
+  ) {
+    console.log("Auth callback tab finished loading. Checking auth status.");
+    checkAuthStatus();
+  }
 });
 
 // --- Message Listener ---
 // This is the main communication hub for the background script.
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  console.log("Background script received a message:", request);
+
   // The UI will send this message when it opens.
   if (request.action === "check_auth_status") {
     checkAuthStatus();
