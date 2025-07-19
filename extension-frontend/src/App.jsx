@@ -1,7 +1,33 @@
 import React, { useState, useEffect } from "react";
+import { initializeApp } from "firebase/app";
+import {
+  getFirestore,
+  collection,
+  query,
+  orderBy,
+  onSnapshot,
+} from "firebase/firestore";
 import "./App.css";
 
+// --- Firebase Configuration ---
+// This is necessary for the frontend to listen to real-time database updates.
+// Replace with your actual Firebase config.
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
+  authDomain: "alturaai.firebaseapp.com",
+  projectId: "alturaai",
+  storageBucket: "alturaai.firebasestorage.app",
+  messagingSenderId: "296537793338",
+  appId: "1:296537793338:web:00814e384e648d4cc46603",
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
 function App() {
+  // --- Main State Management ---
   const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState(false);
   const [isGithubLoggedIn, setIsGithubLoggedIn] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -16,38 +42,25 @@ function App() {
   const [isReviewLoading, setIsReviewLoading] = useState(false);
   const [meetingSlots, setMeetingSlots] = useState([]);
   const [isFindingTimes, setIsFindingTimes] = useState(false);
+  const [researchTopic, setResearchTopic] = useState("");
+  const [researchTasks, setResearchTasks] = useState([]);
+  const [isResearching, setIsResearching] = useState(false);
 
   const isExtension =
     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
 
-  // Function to check auth status from server
-  const checkAuthStatus = async () => {
-    try {
-      const response = await fetch("http://localhost:3001/api/auth/status");
-      const data = await response.json();
-      setIsGoogleLoggedIn(!!data.isGoogleLoggedIn);
-      setIsGithubLoggedIn(!!data.isGithubLoggedIn);
-
-      // Also update Chrome storage to keep it in sync
-      if (isExtension) {
-        chrome.storage.local.set({
-          isGoogleLoggedIn: !!data.isGoogleLoggedIn,
-          isGithubLoggedIn: !!data.isGithubLoggedIn,
-        });
-      }
-    } catch (err) {
-      console.error("Error checking auth status:", err);
-    }
+  // --- Helper function to reset UI states before an action ---
+  const resetActionStates = () => {
+    setSummary("");
+    setError("");
+    setActionStatus("");
+    setMeetingSlots([]);
   };
 
+  // --- Effect for Authentication State ---
   useEffect(() => {
-    // Initial auth status check
-    checkAuthStatus();
-
     if (isExtension) {
       chrome.runtime.sendMessage({ action: "check_auth_status" });
-
-      // Get initial state from Chrome storage
       chrome.storage.local.get(
         ["isGoogleLoggedIn", "isGithubLoggedIn"],
         (result) => {
@@ -55,8 +68,6 @@ function App() {
           setIsGithubLoggedIn(!!result.isGithubLoggedIn);
         }
       );
-
-      // Listen for storage changes
       const handleStorageChange = (changes, area) => {
         if (area === "local") {
           if (changes.isGoogleLoggedIn) {
@@ -67,16 +78,12 @@ function App() {
           }
         }
       };
-
       chrome.storage.onChanged.addListener(handleStorageChange);
       return () => chrome.storage.onChanged.removeListener(handleStorageChange);
     }
-
-    // Set up periodic auth status check (every 30 seconds)
-    const authCheckInterval = setInterval(checkAuthStatus, 30000);
-    return () => clearInterval(authCheckInterval);
   }, [isExtension]);
 
+  // --- Effect for Fetching GitHub Notifications ---
   useEffect(() => {
     if (!isGithubLoggedIn) {
       setLoading(false);
@@ -101,17 +108,33 @@ function App() {
     return () => clearInterval(intervalId);
   }, [isGithubLoggedIn]);
 
+  // --- NEW: Effect for Listening to Research Tasks ---
+  useEffect(() => {
+    const q = query(
+      collection(db, "research_tasks"),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const tasks = [];
+      querySnapshot.forEach((doc) => {
+        tasks.push({ id: doc.id, ...doc.data() });
+      });
+      setResearchTasks(tasks);
+    });
+
+    return () => unsubscribe(); // Cleanup the listener when the component unmounts
+  }, []);
+
+  // --- Action Handlers ---
+
   const handleLoginClick = async (service) => {
     try {
       const response = await fetch(`http://localhost:3001/api/auth/${service}`);
       const data = await response.json();
       if (data.url) {
-        if (isExtension) {
-          chrome.tabs.create({ url: data.url });
-          window.close(); // This closes the popup after opening the login tab
-        } else {
-          window.open(data.url, "_blank");
-        }
+        chrome.tabs.create({ url: data.url });
+        window.close();
       }
     } catch (e) {
       setError(`Could not connect to the ${service} login service.`);
@@ -121,14 +144,18 @@ function App() {
   const handleAction = (action, actionName) => {
     setIsLoadingAction(true);
     setLoadingActionName(actionName);
-    setSummary("");
-    setError("");
-    setActionStatus("");
-    setMeetingSlots([]);
+    resetActionStates();
+
     chrome.runtime.sendMessage({ action }, (response) => {
-      if (response.error) setError(response.error);
-      else if (response.summary) setSummary(response.summary);
-      else if (response.message) setActionStatus(response.message);
+      if (response && response.error) {
+        setError(response.error);
+      } else if (response && response.summary) {
+        setSummary(response.summary);
+      } else if (response && response.message) {
+        setActionStatus(response.message);
+      } else {
+        setError("Received an unexpected response from the backend.");
+      }
       setIsLoadingAction(false);
       setLoadingActionName("");
     });
@@ -173,16 +200,12 @@ function App() {
         headers: { "Content-Type": "application/json" },
       });
       if (response.ok) {
-        // Update both React state and Chrome storage
-        setIsGoogleLoggedIn(false);
-        setIsGithubLoggedIn(false);
-
-        if (isExtension) {
-          chrome.storage.local.set({
-            isGoogleLoggedIn: false,
-            isGithubLoggedIn: false,
-          });
-        }
+        chrome.storage.local.set({
+          isGoogleLoggedIn: false,
+          isGithubLoggedIn: false,
+        });
+        resetActionStates();
+        setNotifications([]);
       } else {
         const data = await response.json();
         throw new Error(data.error || "Logout failed");
@@ -194,10 +217,7 @@ function App() {
 
   const handleFindMeetingTimes = async () => {
     setIsFindingTimes(true);
-    setMeetingSlots([]);
-    setError("");
-    setActionStatus("");
-    setSummary("");
+    resetActionStates();
     try {
       const response = await fetch(
         "http://localhost:3001/api/calendar/find-times",
@@ -209,7 +229,6 @@ function App() {
       if (!response.ok) {
         throw new Error(data.error || "Failed to get calendar data.");
       }
-
       const freeSlots = findFreeSlots(data.busyTimes);
       setMeetingSlots(freeSlots);
     } catch (err) {
@@ -224,7 +243,6 @@ function App() {
     const now = new Date();
     const endOfWeek = new Date();
     endOfWeek.setDate(now.getDate() + 7);
-
     let currentTime = new Date(now);
     currentTime.setMinutes(0, 0, 0);
     currentTime.setHours(currentTime.getHours() + 1);
@@ -239,7 +257,6 @@ function App() {
       ) {
         const slotEnd = new Date(currentTime);
         slotEnd.setHours(slotEnd.getHours() + 1);
-
         let isBusy = false;
         for (const busy of busyTimes) {
           const busyStart = new Date(busy.start);
@@ -249,19 +266,43 @@ function App() {
             break;
           }
         }
-
         if (!isBusy) {
           freeSlots.push(new Date(currentTime));
         }
       }
       currentTime.setHours(currentTime.getHours() + 1);
-
       if (currentTime.getHours() >= 17) {
         currentTime.setDate(currentTime.getDate() + 1);
         currentTime.setHours(9, 0, 0, 0);
       }
     }
     return freeSlots;
+  };
+
+  const handleStartResearch = async () => {
+    if (!researchTopic.trim()) {
+      setError("Please enter a research topic.");
+      return;
+    }
+    setIsResearching(true);
+    resetActionStates();
+    try {
+      const response = await fetch("http://localhost:3001/api/research/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ topic: researchTopic }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to start research.");
+      }
+      setActionStatus(data.message);
+      setResearchTopic("");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsResearching(false);
+    }
   };
 
   return (
@@ -330,6 +371,22 @@ function App() {
           </button>
         </div>
 
+        <div className="research-container">
+          <h3>Asynchronous Research</h3>
+          <div className="research-input-group">
+            <input
+              type="text"
+              value={researchTopic}
+              onChange={(e) => setResearchTopic(e.target.value)}
+              placeholder="Enter a topic to research..."
+              disabled={isResearching}
+            />
+            <button onClick={handleStartResearch} disabled={isResearching}>
+              {isResearching ? "Starting..." : "Start Research"}
+            </button>
+          </div>
+        </div>
+
         {actionStatus && <p className="success-message">{actionStatus}</p>}
         {summary && <div className="summary-box">{summary}</div>}
         {error && <p className="error">{error}</p>}
@@ -346,6 +403,31 @@ function App() {
         )}
 
         <hr />
+
+        {/* --- NEW: Research Tasks Display --- */}
+        <div className="research-tasks-container">
+          <h2>Research Tasks</h2>
+          {researchTasks.length > 0 ? (
+            <ul className="research-list">
+              {researchTasks.map((task) => (
+                <li
+                  key={task.id}
+                  className={`research-item status-${task.status}`}
+                >
+                  <div className="task-header">
+                    <strong>{task.topic}</strong>
+                    <span>{task.status}</span>
+                  </div>
+                  {task.status === "completed" && (
+                    <p className="task-result">{task.result}</p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p>No research tasks yet.</p>
+          )}
+        </div>
 
         <h2>GitHub Feed</h2>
         {isGithubLoggedIn ? (
