@@ -1,1209 +1,3 @@
-// import React, { useState, useEffect } from "react";
-// import { initializeApp } from "firebase/app";
-// import {
-//   getFirestore,
-//   collection,
-//   query,
-//   orderBy,
-//   onSnapshot,
-// } from "firebase/firestore";
-// import "./App.css";
-
-// // --- Firebase Configuration ---
-// // IMPORTANT: Replace these placeholder values with your actual Firebase project's configuration.
-// const firebaseConfig = {
-//   apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
-//   authDomain: "alturaai.firebaseapp.com",
-//   projectId: "alturaai",
-//   storageBucket: "alturaai.firebasestorage.app",
-//   messagingSenderId: "296537793338",
-//   appId: "1:296537793338:web:00814e384e648d4cc46603",
-// };
-
-// // Initialize Firebase for the frontend
-// const app = initializeApp(firebaseConfig);
-// const db = getFirestore(app);
-
-// function App() {
-//   // --- Main State Management ---
-//   const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState(false);
-//   const [isGithubLoggedIn, setIsGithubLoggedIn] = useState(false);
-//   const [notifications, setNotifications] = useState([]);
-//   const [loading, setLoading] = useState(true);
-//   const [error, setError] = useState("");
-//   const [summary, setSummary] = useState("");
-//   const [actionStatus, setActionStatus] = useState("");
-//   const [isLoadingAction, setIsLoadingAction] = useState(false);
-//   const [loadingActionName, setLoadingActionName] = useState("");
-//   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-//   const [reviewContent, setReviewContent] = useState("");
-//   const [isReviewLoading, setIsReviewLoading] = useState(false);
-//   const [meetingSlots, setMeetingSlots] = useState([]);
-//   const [isFindingTimes, setIsFindingTimes] = useState(false);
-//   const [researchTopic, setResearchTopic] = useState("");
-//   const [researchTasks, setResearchTasks] = useState([]);
-//   const [isResearching, setIsResearching] = useState(false);
-//   const [orders, setOrders] = useState([]);
-//   const [isScanning, setIsScanning] = useState(false);
-//   const [trackingOrderId, setTrackingOrderId] = useState(null);
-
-//   const isExtension =
-//     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
-
-//   // --- Helper function to reset UI states before an action ---
-//   const resetActionStates = () => {
-//     setSummary("");
-//     setError("");
-//     setActionStatus("");
-//     setMeetingSlots([]);
-//   };
-
-//   // --- Effect for Authentication State ---
-//   useEffect(() => {
-//     if (isExtension) {
-//       chrome.runtime.sendMessage({ action: "check_auth_status" });
-//       chrome.storage.local.get(
-//         ["isGoogleLoggedIn", "isGithubLoggedIn"],
-//         (result) => {
-//           setIsGoogleLoggedIn(!!result.isGoogleLoggedIn);
-//           setIsGithubLoggedIn(!!result.isGithubLoggedIn);
-//         }
-//       );
-//       const handleStorageChange = (changes, area) => {
-//         if (area === "local") {
-//           if (changes.isGoogleLoggedIn) {
-//             setIsGoogleLoggedIn(!!changes.isGoogleLoggedIn.newValue);
-//           }
-//           if (changes.isGithubLoggedIn) {
-//             setIsGithubLoggedIn(!!changes.isGithubLoggedIn.newValue);
-//           }
-//         }
-//       };
-//       chrome.storage.onChanged.addListener(handleStorageChange);
-//       return () => chrome.storage.onChanged.removeListener(handleStorageChange);
-//     }
-//   }, [isExtension]);
-
-//   // --- Effect for Fetching GitHub Notifications ---
-//   useEffect(() => {
-//     if (!isGithubLoggedIn) {
-//       setLoading(false);
-//       setNotifications([]);
-//       return;
-//     }
-//     const fetchNotifications = async () => {
-//       setLoading(true);
-//       try {
-//         const response = await fetch("http://localhost:3001/api/notifications");
-//         if (!response.ok) throw new Error("Failed to fetch notifications.");
-//         const data = await response.json();
-//         setNotifications(data);
-//       } catch (err) {
-//         setError("Could not connect to the notification service.");
-//       } finally {
-//         setLoading(false);
-//       }
-//     };
-//     fetchNotifications();
-//     const intervalId = setInterval(fetchNotifications, 30000);
-//     return () => clearInterval(intervalId);
-//   }, [isGithubLoggedIn]);
-
-//   // --- Effect for Listening to Research Tasks ---
-//   useEffect(() => {
-//     const q = query(
-//       collection(db, "research_tasks"),
-//       orderBy("createdAt", "desc")
-//     );
-//     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-//       const tasks = [];
-//       querySnapshot.forEach((doc) => {
-//         tasks.push({ id: doc.id, ...doc.data() });
-//       });
-//       setResearchTasks(tasks);
-//     });
-//     return () => unsubscribe();
-//   }, []);
-
-//   // --- Effect for Listening to Orders ---
-//   useEffect(() => {
-//     if (!isGoogleLoggedIn) {
-//       setOrders([]);
-//       return;
-//     }
-//     const q = query(collection(db, "orders"), orderBy("scannedAt", "desc"));
-//     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-//       const fetchedOrders = [];
-//       querySnapshot.forEach((doc) => {
-//         fetchedOrders.push({ id: doc.id, ...doc.data() });
-//       });
-//       setOrders(fetchedOrders);
-//     });
-//     return () => unsubscribe();
-//   }, [isGoogleLoggedIn]);
-
-//   // --- Action Handlers ---
-
-//   const handleLoginClick = async (service) => {
-//     try {
-//       const response = await fetch(`http://localhost:3001/api/auth/${service}`);
-//       const data = await response.json();
-//       if (data.url) {
-//         chrome.tabs.create({ url: data.url });
-//         window.close();
-//       }
-//     } catch (e) {
-//       setError(`Could not connect to the ${service} login service.`);
-//     }
-//   };
-
-//   const handleAction = (action, actionName) => {
-//     setIsLoadingAction(true);
-//     setLoadingActionName(actionName);
-//     resetActionStates();
-
-//     chrome.runtime.sendMessage({ action }, (response) => {
-//       if (response && response.error) {
-//         setError(response.error);
-//       } else if (response && response.summary) {
-//         setSummary(response.summary);
-//       } else if (response && response.message) {
-//         setActionStatus(response.message);
-//       } else {
-//         setError("Received an unexpected response from the backend.");
-//       }
-//       setIsLoadingAction(false);
-//       setLoadingActionName("");
-//     });
-//   };
-
-//   const handleReviewPR = async (prUrl) => {
-//     setIsReviewModalOpen(true);
-//     setIsReviewLoading(true);
-//     setReviewContent("");
-//     setError("");
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/github/pr/review",
-//         {
-//           method: "POST",
-//           headers: { "Content-Type": "application/json" },
-//           body: JSON.stringify({ prUrl }),
-//         }
-//       );
-//       const data = await response.json();
-//       if (response.ok) setReviewContent(data.review);
-//       else throw new Error(data.error || "Failed to get review.");
-//     } catch (err) {
-//       setReviewContent(`Error: ${err.message}`);
-//     } finally {
-//       setIsReviewLoading(false);
-//     }
-//   };
-
-//   const handleNotificationClick = (notification) => {
-//     if (notification.type === "pr" && notification.message.includes("opened")) {
-//       handleReviewPR(notification.url);
-//     } else if (notification.url) {
-//       chrome.tabs.create({ url: notification.url });
-//     }
-//   };
-
-//   const handleLogout = async () => {
-//     try {
-//       const response = await fetch("http://localhost:3001/api/logout", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//       });
-//       if (response.ok) {
-//         chrome.storage.local.set({
-//           isGoogleLoggedIn: false,
-//           isGithubLoggedIn: false,
-//         });
-//         resetActionStates();
-//         setNotifications([]);
-//       } else {
-//         const data = await response.json();
-//         throw new Error(data.error || "Logout failed");
-//       }
-//     } catch (err) {
-//       setError(`Logout failed: ${err.message}`);
-//     }
-//   };
-
-//   const handleFindMeetingTimes = async () => {
-//     setIsFindingTimes(true);
-//     resetActionStates();
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/calendar/find-times",
-//         {
-//           method: "POST",
-//         }
-//       );
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to get calendar data.");
-//       }
-//       const freeSlots = findFreeSlots(data.busyTimes);
-//       setMeetingSlots(freeSlots);
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setIsFindingTimes(false);
-//     }
-//   };
-
-//   const findFreeSlots = (busyTimes) => {
-//     const freeSlots = [];
-//     const now = new Date();
-//     const endOfWeek = new Date();
-//     endOfWeek.setDate(now.getDate() + 7);
-//     let currentTime = new Date(now);
-//     currentTime.setMinutes(0, 0, 0);
-//     currentTime.setHours(currentTime.getHours() + 1);
-
-//     while (currentTime < endOfWeek && freeSlots.length < 10) {
-//       const dayOfWeek = currentTime.getDay();
-//       if (
-//         currentTime.getHours() >= 9 &&
-//         currentTime.getHours() < 17 &&
-//         dayOfWeek > 0 &&
-//         dayOfWeek < 6
-//       ) {
-//         const slotEnd = new Date(currentTime);
-//         slotEnd.setHours(slotEnd.getHours() + 1);
-//         let isBusy = false;
-//         for (const busy of busyTimes) {
-//           const busyStart = new Date(busy.start);
-//           const busyEnd = new Date(busy.end);
-//           if (currentTime < busyEnd && slotEnd > busyStart) {
-//             isBusy = true;
-//             break;
-//           }
-//         }
-//         if (!isBusy) {
-//           freeSlots.push(new Date(currentTime));
-//         }
-//       }
-//       currentTime.setHours(currentTime.getHours() + 1);
-//       if (currentTime.getHours() >= 17) {
-//         currentTime.setDate(currentTime.getDate() + 1);
-//         currentTime.setHours(9, 0, 0, 0);
-//       }
-//     }
-//     return freeSlots;
-//   };
-
-//   const handleStartResearch = async () => {
-//     if (!researchTopic.trim()) {
-//       setError("Please enter a research topic.");
-//       return;
-//     }
-//     setIsResearching(true);
-//     resetActionStates();
-//     try {
-//       const response = await fetch("http://localhost:3001/api/research/start", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//         body: JSON.stringify({ topic: researchTopic }),
-//       });
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to start research.");
-//       }
-//       setActionStatus(data.message);
-//       setResearchTopic("");
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setIsResearching(false);
-//     }
-//   };
-
-//   const handleScanOrders = async () => {
-//     setIsScanning(true);
-//     resetActionStates();
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/orders/scan-inbox",
-//         {
-//           method: "POST",
-//         }
-//       );
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to scan for orders.");
-//       }
-//       setActionStatus(data.message);
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setIsScanning(false);
-//     }
-//   };
-
-//   const handleStartTracking = async (order) => {
-//     setTrackingOrderId(order.id);
-//     resetActionStates();
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/orders/add-tracking",
-//         {
-//           method: "POST",
-//           headers: { "Content-Type": "application/json" },
-//           body: JSON.stringify({
-//             orderId: order.id,
-//             trackingNumber: order.trackingNumber,
-//           }),
-//         }
-//       );
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to start tracking.");
-//       }
-//       setActionStatus(data.message);
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setTrackingOrderId(null);
-//     }
-//   };
-
-//   return (
-//     <div className="App">
-//       <header className="App-header">
-//         <h1>AlturaAI</h1>
-//         <div className="auth-status">
-//           {!isGoogleLoggedIn ? (
-//             <button
-//               onClick={() => handleLoginClick("google")}
-//               className="login-button"
-//             >
-//               Login with Google
-//             </button>
-//           ) : (
-//             <p className="status-ok">✔ Google Connected</p>
-//           )}
-//           {!isGithubLoggedIn ? (
-//             <button
-//               onClick={() => handleLoginClick("github")}
-//               className="login-button"
-//             >
-//               Login with GitHub
-//             </button>
-//           ) : (
-//             <p className="status-ok">✔ GitHub Connected</p>
-//           )}
-//           {(isGoogleLoggedIn || isGithubLoggedIn) && (
-//             <button onClick={handleLogout} className="logout-button">
-//               Logout
-//             </button>
-//           )}
-//         </div>
-//       </header>
-//       <main className="App-main">
-//         <div className="action-buttons">
-//           <button
-//             onClick={() => handleAction("summarize_page", "Summarize")}
-//             disabled={isLoadingAction}
-//           >
-//             {isLoadingAction && loadingActionName === "Summarize"
-//               ? "Summarizing..."
-//               : "Summarize Page"}
-//           </button>
-//           <button
-//             onClick={() => handleAction("draft_email", "Draft")}
-//             disabled={!isGoogleLoggedIn || isLoadingAction}
-//           >
-//             {isLoadingAction && loadingActionName === "Draft"
-//               ? "Drafting..."
-//               : "Draft Email"}
-//           </button>
-//           <button
-//             onClick={() => handleAction("create_notion_doc", "Notion")}
-//             disabled={isLoadingAction}
-//           >
-//             {isLoadingAction && loadingActionName === "Notion"
-//               ? "Creating..."
-//               : "Create Notion Doc"}
-//           </button>
-//           <button
-//             onClick={handleFindMeetingTimes}
-//             disabled={!isGoogleLoggedIn || isFindingTimes}
-//           >
-//             {isFindingTimes ? "Finding Times..." : "Find Meeting Times"}
-//           </button>
-//         </div>
-
-//         <div className="research-container">
-//           <h3>Asynchronous Research</h3>
-//           <div className="research-input-group">
-//             <input
-//               type="text"
-//               value={researchTopic}
-//               onChange={(e) => setResearchTopic(e.target.value)}
-//               placeholder="Enter a topic to research..."
-//               disabled={isResearching}
-//             />
-//             <button onClick={handleStartResearch} disabled={isResearching}>
-//               {isResearching ? "Starting..." : "Start Research"}
-//             </button>
-//           </div>
-//         </div>
-
-//         {actionStatus && <p className="success-message">{actionStatus}</p>}
-//         {summary && <div className="summary-box">{summary}</div>}
-//         {error && <p className="error">{error}</p>}
-
-//         {meetingSlots.length > 0 && (
-//           <div className="results-container">
-//             <h3>Available Meeting Times:</h3>
-//             <ul className="slots-list">
-//               {meetingSlots.map((slot, index) => (
-//                 <li key={index}>{slot.toLocaleString()}</li>
-//               ))}
-//             </ul>
-//           </div>
-//         )}
-
-//         <hr />
-
-//         <div className="orders-container">
-//           <h2>My Orders</h2>
-//           <button
-//             onClick={handleScanOrders}
-//             disabled={!isGoogleLoggedIn || isScanning}
-//           >
-//             {isScanning ? "Scanning Gmail..." : "Scan for New Orders"}
-//           </button>
-//           {isGoogleLoggedIn ? (
-//             orders.length > 0 ? (
-//               <ul className="orders-list">
-//                 {orders.map((order) => (
-//                   <li key={order.id} className="order-item">
-//                     <p>
-//                       <strong>Item:</strong> {order.itemName}
-//                     </p>
-//                     <p>
-//                       <strong>ETA:</strong> {order.eta}
-//                     </p>
-//                     <p>
-//                       <strong>Tracking:</strong> {order.trackingNumber}
-//                     </p>
-//                     {order.status && (
-//                       <p>
-//                         <strong>Status:</strong> {order.status}
-//                       </p>
-//                     )}
-//                     {order.trackingNumber &&
-//                       order.trackingNumber !== "N/A" &&
-//                       !order.aftershipTrackingId && (
-//                         <button
-//                           onClick={() => handleStartTracking(order)}
-//                           disabled={trackingOrderId === order.id}
-//                           className="track-button"
-//                         >
-//                           {trackingOrderId === order.id
-//                             ? "Starting..."
-//                             : "Start Live Tracking"}
-//                         </button>
-//                       )}
-//                   </li>
-//                 ))}
-//               </ul>
-//             ) : (
-//               <p>
-//                 No orders found yet. Click "Scan for New Orders" to search your
-//                 Gmail.
-//               </p>
-//             )
-//           ) : (
-//             <p>Login with Google to track your orders.</p>
-//           )}
-//         </div>
-
-//         <div className="research-tasks-container">
-//           <h2>Research Tasks</h2>
-//           {researchTasks.length > 0 ? (
-//             <ul className="research-list">
-//               {researchTasks.map((task) => (
-//                 <li
-//                   key={task.id}
-//                   className={`research-item status-${task.status}`}
-//                 >
-//                   <div className="task-header">
-//                     <strong>{task.topic}</strong>
-//                     <span>{task.status}</span>
-//                   </div>
-//                   {task.status === "completed" && (
-//                     <p className="task-result">{task.result}</p>
-//                   )}
-//                   {task.status === "failed" && (
-//                     <p className="task-result error">{task.error}</p>
-//                   )}
-//                 </li>
-//               ))}
-//             </ul>
-//           ) : (
-//             <p>No research tasks yet.</p>
-//           )}
-//         </div>
-
-//         <h2>GitHub Feed</h2>
-//         {isGithubLoggedIn ? (
-//           loading ? (
-//             <p>Loading feed...</p>
-//           ) : notifications.length > 0 ? (
-//             <ul className="notification-feed">
-//               {notifications.map((notif) => (
-//                 <li
-//                   key={notif.id}
-//                   className="notification-item"
-//                   onClick={() => handleNotificationClick(notif)}
-//                 >
-//                   <p className="message">{notif.message}</p>
-//                   <p className="meta">
-//                     {notif.repo} -{" "}
-//                     {new Date(notif.timestamp.seconds * 1000).toLocaleString()}
-//                   </p>
-//                 </li>
-//               ))}
-//             </ul>
-//           ) : (
-//             <p>No new notifications. Push a commit or open a PR to test.</p>
-//           )
-//         ) : (
-//           <p>Login with GitHub to see your feed.</p>
-//         )}
-//       </main>
-
-//       {isReviewModalOpen && (
-//         <div className="modal-overlay">
-//           <div className="modal-content">
-//             <button
-//               className="modal-close"
-//               onClick={() => setIsReviewModalOpen(false)}
-//             >
-//               X
-//             </button>
-//             <h2>AI Pull Request Review</h2>
-//             {isReviewLoading ? (
-//               <p>Analyzing code changes...</p>
-//             ) : (
-//               <pre className="review-text">{reviewContent}</pre>
-//             )}
-//           </div>
-//         </div>
-//       )}
-//     </div>
-//   );
-// }
-
-// export default App;
-
-// import React, { useState, useEffect } from "react";
-// import { initializeApp } from "firebase/app";
-// import {
-//   getFirestore,
-//   collection,
-//   query,
-//   orderBy,
-//   onSnapshot,
-// } from "firebase/firestore";
-// import "./App.css";
-
-// // --- Firebase Configuration ---
-// // IMPORTANT: Replace these placeholder values with your actual Firebase project's configuration.
-// const firebaseConfig = {
-//   apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
-//   authDomain: "alturaai.firebaseapp.com",
-//   projectId: "alturaai",
-//   storageBucket: "alturaai.firebasestorage.app",
-//   messagingSenderId: "296537793338",
-//   appId: "1:296537793338:web:00814e384e648d4cc46603",
-// };
-
-// // Initialize Firebase for the frontend
-// const app = initializeApp(firebaseConfig);
-// const db = getFirestore(app);
-
-// function App() {
-//   // --- Main State Management ---
-//   const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState(false);
-//   const [isGithubLoggedIn, setIsGithubLoggedIn] = useState(false);
-//   const [notifications, setNotifications] = useState([]);
-//   const [loading, setLoading] = useState(true);
-//   const [error, setError] = useState("");
-//   const [summary, setSummary] = useState("");
-//   const [actionStatus, setActionStatus] = useState("");
-//   const [isLoadingAction, setIsLoadingAction] = useState(false);
-//   const [loadingActionName, setLoadingActionName] = useState("");
-//   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
-//   const [reviewContent, setReviewContent] = useState("");
-//   const [isReviewLoading, setIsReviewLoading] = useState(false);
-//   const [meetingSlots, setMeetingSlots] = useState([]);
-//   const [isFindingTimes, setIsFindingTimes] = useState(false);
-//   const [researchTopic, setResearchTopic] = useState("");
-//   const [researchTasks, setResearchTasks] = useState([]);
-//   const [isResearching, setIsResearching] = useState(false);
-//   const [orders, setOrders] = useState([]);
-//   const [isScanning, setIsScanning] = useState(false);
-//   const [trackingOrderId, setTrackingOrderId] = useState(null);
-
-//   const isExtension =
-//     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
-
-//   // --- Helper function to reset UI states before an action ---
-//   const resetActionStates = () => {
-//     setSummary("");
-//     setError("");
-//     setActionStatus("");
-//     setMeetingSlots([]);
-//   };
-
-//   // --- Effect for Authentication State ---
-//   useEffect(() => {
-//     if (isExtension) {
-//       chrome.runtime.sendMessage({ action: "check_auth_status" });
-//       chrome.storage.local.get(
-//         ["isGoogleLoggedIn", "isGithubLoggedIn"],
-//         (result) => {
-//           setIsGoogleLoggedIn(!!result.isGoogleLoggedIn);
-//           setIsGithubLoggedIn(!!result.isGithubLoggedIn);
-//         }
-//       );
-//       const handleStorageChange = (changes, area) => {
-//         if (area === "local") {
-//           if (changes.isGoogleLoggedIn) {
-//             setIsGoogleLoggedIn(!!changes.isGoogleLoggedIn.newValue);
-//           }
-//           if (changes.isGithubLoggedIn) {
-//             setIsGithubLoggedIn(!!changes.isGithubLoggedIn.newValue);
-//           }
-//         }
-//       };
-//       chrome.storage.onChanged.addListener(handleStorageChange);
-//       return () => chrome.storage.onChanged.removeListener(handleStorageChange);
-//     }
-//   }, [isExtension]);
-
-//   // --- Effect for Fetching GitHub Notifications ---
-//   useEffect(() => {
-//     if (!isGithubLoggedIn) {
-//       setLoading(false);
-//       setNotifications([]);
-//       return;
-//     }
-//     const fetchNotifications = async () => {
-//       setLoading(true);
-//       try {
-//         const response = await fetch("http://localhost:3001/api/notifications");
-//         if (!response.ok) throw new Error("Failed to fetch notifications.");
-//         const data = await response.json();
-//         setNotifications(data);
-//       } catch (err) {
-//         setError("Could not connect to the notification service.");
-//       } finally {
-//         setLoading(false);
-//       }
-//     };
-//     fetchNotifications();
-//     const intervalId = setInterval(fetchNotifications, 30000);
-//     return () => clearInterval(intervalId);
-//   }, [isGithubLoggedIn]);
-
-//   // --- Effect for Listening to Research Tasks ---
-//   useEffect(() => {
-//     const q = query(
-//       collection(db, "research_tasks"),
-//       orderBy("createdAt", "desc")
-//     );
-//     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-//       const tasks = [];
-//       querySnapshot.forEach((doc) => {
-//         tasks.push({ id: doc.id, ...doc.data() });
-//       });
-//       setResearchTasks(tasks);
-//     });
-//     return () => unsubscribe();
-//   }, []);
-
-//   // --- Effect for Listening to Orders ---
-//   useEffect(() => {
-//     if (!isGoogleLoggedIn) {
-//       setOrders([]);
-//       return;
-//     }
-//     const q = query(collection(db, "orders"), orderBy("scannedAt", "desc"));
-//     const unsubscribe = onSnapshot(q, (querySnapshot) => {
-//       const fetchedOrders = [];
-//       querySnapshot.forEach((doc) => {
-//         fetchedOrders.push({ id: doc.id, ...doc.data() });
-//       });
-//       setOrders(fetchedOrders);
-//     });
-//     return () => unsubscribe();
-//   }, [isGoogleLoggedIn]);
-
-//   // --- Action Handlers ---
-
-//   const handleLoginClick = async (service) => {
-//     try {
-//       const response = await fetch(`http://localhost:3001/api/auth/${service}`);
-//       const data = await response.json();
-//       if (data.url) {
-//         chrome.tabs.create({ url: data.url });
-//         window.close();
-//       }
-//     } catch (e) {
-//       setError(`Could not connect to the ${service} login service.`);
-//     }
-//   };
-
-//   const handleAction = (action, actionName) => {
-//     setIsLoadingAction(true);
-//     setLoadingActionName(actionName);
-//     resetActionStates();
-
-//     chrome.runtime.sendMessage({ action }, (response) => {
-//       if (response && response.error) {
-//         setError(response.error);
-//       } else if (response && response.summary) {
-//         setSummary(response.summary);
-//       } else if (response && response.message) {
-//         setActionStatus(response.message);
-//       } else {
-//         setError("Received an unexpected response from the backend.");
-//       }
-//       setIsLoadingAction(false);
-//       setLoadingActionName("");
-//     });
-//   };
-
-//   const handleReviewPR = async (prUrl) => {
-//     setIsReviewModalOpen(true);
-//     setIsReviewLoading(true);
-//     setReviewContent("");
-//     setError("");
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/github/pr/review",
-//         {
-//           method: "POST",
-//           headers: { "Content-Type": "application/json" },
-//           body: JSON.stringify({ prUrl }),
-//         }
-//       );
-//       const data = await response.json();
-//       if (response.ok) setReviewContent(data.review);
-//       else throw new Error(data.error || "Failed to get review.");
-//     } catch (err) {
-//       setReviewContent(`Error: ${err.message}`);
-//     } finally {
-//       setIsReviewLoading(false);
-//     }
-//   };
-
-//   const handleNotificationClick = (notification) => {
-//     if (notification.type === "pr" && notification.message.includes("opened")) {
-//       handleReviewPR(notification.url);
-//     } else if (notification.url) {
-//       chrome.tabs.create({ url: notification.url });
-//     }
-//   };
-
-//   const handleLogout = async () => {
-//     try {
-//       const response = await fetch("http://localhost:3001/api/logout", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//       });
-//       if (response.ok) {
-//         chrome.storage.local.set({
-//           isGoogleLoggedIn: false,
-//           isGithubLoggedIn: false,
-//         });
-//         resetActionStates();
-//         setNotifications([]);
-//       } else {
-//         const data = await response.json();
-//         throw new Error(data.error || "Logout failed");
-//       }
-//     } catch (err) {
-//       setError(`Logout failed: ${err.message}`);
-//     }
-//   };
-
-//   const handleFindMeetingTimes = async () => {
-//     setIsFindingTimes(true);
-//     resetActionStates();
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/calendar/find-times",
-//         {
-//           method: "POST",
-//         }
-//       );
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to get calendar data.");
-//       }
-//       const freeSlots = findFreeSlots(data.busyTimes);
-//       setMeetingSlots(freeSlots);
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setIsFindingTimes(false);
-//     }
-//   };
-
-//   const findFreeSlots = (busyTimes) => {
-//     const freeSlots = [];
-//     const now = new Date();
-//     const endOfWeek = new Date();
-//     endOfWeek.setDate(now.getDate() + 7);
-//     let currentTime = new Date(now);
-//     currentTime.setMinutes(0, 0, 0);
-//     currentTime.setHours(currentTime.getHours() + 1);
-
-//     while (currentTime < endOfWeek && freeSlots.length < 10) {
-//       const dayOfWeek = currentTime.getDay();
-//       if (
-//         currentTime.getHours() >= 9 &&
-//         currentTime.getHours() < 17 &&
-//         dayOfWeek > 0 &&
-//         dayOfWeek < 6
-//       ) {
-//         const slotEnd = new Date(currentTime);
-//         slotEnd.setHours(slotEnd.getHours() + 1);
-//         let isBusy = false;
-//         for (const busy of busyTimes) {
-//           const busyStart = new Date(busy.start);
-//           const busyEnd = new Date(busy.end);
-//           if (currentTime < busyEnd && slotEnd > busyStart) {
-//             isBusy = true;
-//             break;
-//           }
-//         }
-//         if (!isBusy) {
-//           freeSlots.push(new Date(currentTime));
-//         }
-//       }
-//       currentTime.setHours(currentTime.getHours() + 1);
-//       if (currentTime.getHours() >= 17) {
-//         currentTime.setDate(currentTime.getDate() + 1);
-//         currentTime.setHours(9, 0, 0, 0);
-//       }
-//     }
-//     return freeSlots;
-//   };
-
-//   const handleStartResearch = async () => {
-//     if (!researchTopic.trim()) {
-//       setError("Please enter a research topic.");
-//       return;
-//     }
-//     setIsResearching(true);
-//     resetActionStates();
-//     try {
-//       const response = await fetch("http://localhost:3001/api/research/start", {
-//         method: "POST",
-//         headers: { "Content-Type": "application/json" },
-//         body: JSON.stringify({ topic: researchTopic }),
-//       });
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to start research.");
-//       }
-//       setActionStatus(data.message);
-//       setResearchTopic("");
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setIsResearching(false);
-//     }
-//   };
-
-//   const handleScanOrders = async () => {
-//     setIsScanning(true);
-//     resetActionStates();
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/orders/scan-inbox",
-//         {
-//           method: "POST",
-//         }
-//       );
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to scan for orders.");
-//       }
-//       setActionStatus(data.message);
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setIsScanning(false);
-//     }
-//   };
-
-//   const handleStartTracking = async (order) => {
-//     setTrackingOrderId(order.id);
-//     resetActionStates();
-//     try {
-//       const response = await fetch(
-//         "http://localhost:3001/api/orders/add-tracking",
-//         {
-//           method: "POST",
-//           headers: { "Content-Type": "application/json" },
-//           body: JSON.stringify({
-//             orderId: order.id,
-//             trackingNumber: order.trackingNumber,
-//           }),
-//         }
-//       );
-//       const data = await response.json();
-//       if (!response.ok) {
-//         throw new Error(data.error || "Failed to start tracking.");
-//       }
-//       setActionStatus(data.message);
-//     } catch (err) {
-//       setError(err.message);
-//     } finally {
-//       setTrackingOrderId(null);
-//     }
-//   };
-
-//   return (
-//     <div className="App">
-//       <header className="App-header">
-//         <h1>AlturaAI</h1>
-//         <div className="auth-status">
-//           {!isGoogleLoggedIn ? (
-//             <button
-//               onClick={() => handleLoginClick("google")}
-//               className="login-button"
-//             >
-//               Login with Google
-//             </button>
-//           ) : (
-//             <p className="status-ok">✔ Google Connected</p>
-//           )}
-//           {!isGithubLoggedIn ? (
-//             <button
-//               onClick={() => handleLoginClick("github")}
-//               className="login-button"
-//             >
-//               Login with GitHub
-//             </button>
-//           ) : (
-//             <p className="status-ok">✔ GitHub Connected</p>
-//           )}
-//           {(isGoogleLoggedIn || isGithubLoggedIn) && (
-//             <button onClick={handleLogout} className="logout-button">
-//               Logout
-//             </button>
-//           )}
-//         </div>
-//       </header>
-//       <main className="App-main">
-//         <div className="action-buttons">
-//           <button
-//             onClick={() => handleAction("summarize_page", "Summarize")}
-//             disabled={isLoadingAction}
-//           >
-//             {isLoadingAction && loadingActionName === "Summarize"
-//               ? "Summarizing..."
-//               : "Summarize Page"}
-//           </button>
-//           <button
-//             onClick={() => handleAction("draft_email", "Draft")}
-//             disabled={!isGoogleLoggedIn || isLoadingAction}
-//           >
-//             {isLoadingAction && loadingActionName === "Draft"
-//               ? "Drafting..."
-//               : "Draft Email"}
-//           </button>
-//           <button
-//             onClick={() => handleAction("create_notion_doc", "Notion")}
-//             disabled={isLoadingAction}
-//           >
-//             {isLoadingAction && loadingActionName === "Notion"
-//               ? "Creating..."
-//               : "Create Notion Doc"}
-//           </button>
-//           <button
-//             onClick={handleFindMeetingTimes}
-//             disabled={!isGoogleLoggedIn || isFindingTimes}
-//           >
-//             {isFindingTimes ? "Finding Times..." : "Find Meeting Times"}
-//           </button>
-//         </div>
-
-//         <div className="research-container">
-//           <h3>Asynchronous Research</h3>
-//           <div className="research-input-group">
-//             <input
-//               type="text"
-//               value={researchTopic}
-//               onChange={(e) => setResearchTopic(e.target.value)}
-//               placeholder="Enter a topic to research..."
-//               disabled={isResearching}
-//             />
-//             <button onClick={handleStartResearch} disabled={isResearching}>
-//               {isResearching ? "Starting..." : "Start Research"}
-//             </button>
-//           </div>
-//         </div>
-
-//         {actionStatus && <p className="success-message">{actionStatus}</p>}
-//         {summary && <div className="summary-box">{summary}</div>}
-//         {error && <p className="error">{error}</p>}
-
-//         {meetingSlots.length > 0 && (
-//           <div className="results-container">
-//             <h3>Available Meeting Times:</h3>
-//             <ul className="slots-list">
-//               {meetingSlots.map((slot, index) => (
-//                 <li key={index}>{slot.toLocaleString()}</li>
-//               ))}
-//             </ul>
-//           </div>
-//         )}
-
-//         <hr />
-
-//         <div className="orders-container">
-//           <h2>My Orders</h2>
-//           <button
-//             onClick={handleScanOrders}
-//             disabled={!isGoogleLoggedIn || isScanning}
-//           >
-//             {isScanning ? "Scanning Gmail..." : "Scan for New Orders"}
-//           </button>
-//           {isGoogleLoggedIn ? (
-//             orders.length > 0 ? (
-//               <ul className="orders-list">
-//                 {orders.map((order) => (
-//                   <li key={order.id} className="order-item">
-//                     <p>
-//                       <strong>Item:</strong> {order.itemName}
-//                     </p>
-//                     <p>
-//                       <strong>ETA:</strong> {order.eta}
-//                     </p>
-//                     <p>
-//                       <strong>Tracking:</strong> {order.trackingNumber}
-//                     </p>
-//                     {order.status && (
-//                       <p>
-//                         <strong>Status:</strong> {order.status}
-//                       </p>
-//                     )}
-//                     {/* THIS IS THE NEW BUTTON */}
-//                     {order.trackingNumber &&
-//                       order.trackingNumber !== "N/A" &&
-//                       !order.aftershipTrackingId && (
-//                         <button
-//                           onClick={() => handleStartTracking(order)}
-//                           disabled={trackingOrderId === order.id}
-//                           className="track-button"
-//                         >
-//                           {trackingOrderId === order.id
-//                             ? "Starting..."
-//                             : "Start Live Tracking"}
-//                         </button>
-//                       )}
-//                   </li>
-//                 ))}
-//               </ul>
-//             ) : (
-//               <p>
-//                 No orders found yet. Click "Scan for New Orders" to search your
-//                 Gmail.
-//               </p>
-//             )
-//           ) : (
-//             <p>Login with Google to track your orders.</p>
-//           )}
-//         </div>
-
-//         <div className="research-tasks-container">
-//           <h2>Research Tasks</h2>
-//           {researchTasks.length > 0 ? (
-//             <ul className="research-list">
-//               {researchTasks.map((task) => (
-//                 <li
-//                   key={task.id}
-//                   className={`research-item status-${task.status}`}
-//                 >
-//                   <div className="task-header">
-//                     <strong>{task.topic}</strong>
-//                     <span>{task.status}</span>
-//                   </div>
-//                   {task.status === "completed" && (
-//                     <p className="task-result">{task.result}</p>
-//                   )}
-//                   {task.status === "failed" && (
-//                     <p className="task-result error">{task.error}</p>
-//                   )}
-//                 </li>
-//               ))}
-//             </ul>
-//           ) : (
-//             <p>No research tasks yet.</p>
-//           )}
-//         </div>
-
-//         <h2>GitHub Feed</h2>
-//         {isGithubLoggedIn ? (
-//           loading ? (
-//             <p>Loading feed...</p>
-//           ) : notifications.length > 0 ? (
-//             <ul className="notification-feed">
-//               {notifications.map((notif) => (
-//                 <li
-//                   key={notif.id}
-//                   className="notification-item"
-//                   onClick={() => handleNotificationClick(notif)}
-//                 >
-//                   <p className="message">{notif.message}</p>
-//                   <p className="meta">
-//                     {notif.repo} -{" "}
-//                     {new Date(notif.timestamp.seconds * 1000).toLocaleString()}
-//                   </p>
-//                 </li>
-//               ))}
-//             </ul>
-//           ) : (
-//             <p>No new notifications. Push a commit or open a PR to test.</p>
-//           )
-//         ) : (
-//           <p>Login with GitHub to see your feed.</p>
-//         )}
-//       </main>
-
-//       {isReviewModalOpen && (
-//         <div className="modal-overlay">
-//           <div className="modal-content">
-//             <button
-//               className="modal-close"
-//               onClick={() => setIsReviewModalOpen(false)}
-//             >
-//               X
-//             </button>
-//             <h2>AI Pull Request Review</h2>
-//             {isReviewLoading ? (
-//               <p>Analyzing code changes...</p>
-//             ) : (
-//               <pre className="review-text">{reviewContent}</pre>
-//             )}
-//           </div>
-//         </div>
-//       )}
-//     </div>
-//   );
-// }
 import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import {
@@ -1213,25 +7,46 @@ import {
   orderBy,
   onSnapshot,
 } from "firebase/firestore";
+import {
+  Bell,
+  Search,
+  TrendingUp,
+  GitBranch,
+  FileText,
+  Bot,
+  Settings,
+  CheckCircle,
+  Code,
+  DollarSign,
+  Calendar,
+  Mail,
+  Youtube,
+  BookOpen,
+  LogOut,
+  X,
+  Package,
+  ChevronUp,
+  ChevronDown,
+} from "lucide-react";
+
 import "./App.css";
 
 // --- Firebase Configuration ---
-// IMPORTANT: Replace these placeholder values with your actual Firebase project's configuration.
 const firebaseConfig = {
-  apiKey: "AIzaSyCKzR8anjdxGdBdmvwWIbK7Njp87XQbGF0",
-  authDomain: "alturaai.firebaseapp.com",
-  projectId: "alturaai",
-  storageBucket: "alturaai.firebasestorage.app",
-  messagingSenderId: "296537793338",
-  appId: "1:296537793338:web:00814e384e648d4cc46603",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Initialize Firebase for the frontend
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 function App() {
-  // --- Main State Management ---
+  // --- Main State Management (UNCHANGED) ---
   const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState(false);
   const [isGithubLoggedIn, setIsGithubLoggedIn] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -1261,10 +76,23 @@ function App() {
   const [composedText, setComposedText] = useState("");
   const [isComposing, setIsComposing] = useState(false);
 
+  // --- NEW State for UI Visibility ---
+  const [expandedTasks, setExpandedTasks] = useState({});
+  const [isGithubFeedVisible, setIsGithubFeedVisible] = useState(false);
+  const [isSnippetsVisible, setIsSnippetsVisible] = useState(false);
+  const [isOrdersVisible, setIsOrdersVisible] = useState(false);
+  const [isResearchTasksVisible, setIsResearchTasksVisible] = useState(false);
+  const [isStockAlertsVisible, setIsStockAlertsVisible] = useState(false);
+
   const isExtension =
     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
 
-  // --- Helper function to reset UI states before an action ---
+  // --- NEW: Helper function to toggle individual task expansion ---
+  const toggleTaskExpansion = (taskId) => {
+    setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
+  };
+
+  // --- Helper function to reset UI states (UNCHANGED) ---
   const resetActionStates = () => {
     setSummary("");
     setError("");
@@ -1273,7 +101,7 @@ function App() {
     setComposedText("");
   };
 
-  // --- Effect for Authentication State ---
+  // --- ALL EFFECTS (UNCHANGED) ---
   useEffect(() => {
     if (isExtension) {
       chrome.runtime.sendMessage({ action: "check_auth_status" });
@@ -1299,7 +127,6 @@ function App() {
     }
   }, [isExtension]);
 
-  // --- Effect for Fetching GitHub Notifications ---
   useEffect(() => {
     if (!isGithubLoggedIn) {
       setLoading(false);
@@ -1311,8 +138,13 @@ function App() {
       try {
         const response = await fetch("http://localhost:3001/api/notifications");
         if (!response.ok) throw new Error("Failed to fetch notifications.");
+        // App.jsx inside the fetchNotifications function
+
         const data = await response.json();
-        setNotifications(data);
+        const githubNotifications = data.filter(
+          (notif) => notif.type !== "stock"
+        ); // <-- ADD THIS
+        setNotifications(githubNotifications); // <-- MODIFY THIS
       } catch (err) {
         setError("Could not connect to the notification service.");
       } finally {
@@ -1324,7 +156,6 @@ function App() {
     return () => clearInterval(intervalId);
   }, [isGithubLoggedIn]);
 
-  // --- Effect for Listening to Research Tasks ---
   useEffect(() => {
     const q = query(
       collection(db, "research_tasks"),
@@ -1340,7 +171,6 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- Effect for Listening to Orders ---
   useEffect(() => {
     if (!isGoogleLoggedIn) {
       setOrders([]);
@@ -1357,7 +187,6 @@ function App() {
     return () => unsubscribe();
   }, [isGoogleLoggedIn]);
 
-  // --- Effect for Listening to Snippets ---
   useEffect(() => {
     const q = query(collection(db, "snippets"), orderBy("savedAt", "desc"));
     const unsubscribe = onSnapshot(
@@ -1377,7 +206,6 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- Effect for Listening to Stock Alerts ---
   useEffect(() => {
     const q = query(
       collection(db, "stock_alerts"),
@@ -1392,9 +220,16 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+  useEffect(() => {
+    if (actionStatus) {
+      const timer = setTimeout(() => {
+        setActionStatus("");
+      }, 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [actionStatus]);
 
-  // --- Action Handlers ---
-
+  // --- ALL ACTION HANDLERS (UNCHANGED) ---
   const handleLoginClick = async (service) => {
     try {
       const response = await fetch(`http://localhost:3001/api/auth/${service}`);
@@ -1679,308 +514,544 @@ function App() {
       setIsSettingAlert(false);
     }
   };
+  // App.jsx
 
+  // ADD THIS ENTIRE FUNCTION
+  const handleDeleteStockAlert = async (alertId) => {
+    // Prevent accidental clicks while another action is in progress
+    if (isLoadingAction) return;
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/stocks/alert/${alertId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete the alert.");
+      }
+
+      // The UI will update automatically because of the onSnapshot listener.
+      // We can optionally show a success message.
+      setActionStatus("Stock alert removed.");
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // --- NEW JSX STRUCTURE with Collapsible Logic ---
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>AlturaAI</h1>
-        <div className="auth-status">
-          {!isGoogleLoggedIn ? (
+    <div className="container">
+      {/* Header */}
+      <header className="app-header">
+        <div className="header-left">
+          <div className="logo">
+            <Bot className="logo-icon" />
+            <span className="logo-text">AlturaAI</span>
+          </div>
+          {isGoogleLoggedIn ? (
+            <div className="status-indicator-green">
+              <div className="status-dot animate-pulse"></div>
+              <span>Google Connected</span>
+            </div>
+          ) : (
             <button
+              className="btn-login"
               onClick={() => handleLoginClick("google")}
-              className="login-button"
             >
               Login with Google
             </button>
-          ) : (
-            <p className="status-ok">✔ Google Connected</p>
           )}
-          {!isGithubLoggedIn ? (
+          {isGithubLoggedIn ? (
+            <div className="status-indicator-purple">
+              <div className="status-dot animate-pulse"></div>
+              <span>GitHub Connected</span>
+            </div>
+          ) : (
             <button
+              className="btn-login"
               onClick={() => handleLoginClick("github")}
-              className="login-button"
             >
               Login with GitHub
             </button>
-          ) : (
-            <p className="status-ok">✔ GitHub Connected</p>
           )}
+        </div>
+        <div className="header-right">
+          <Bell className="icon-btn" />
+          <Settings className="icon-btn" />
           {(isGoogleLoggedIn || isGithubLoggedIn) && (
-            <button onClick={handleLogout} className="logout-button">
-              Logout
-            </button>
+            <LogOut
+              className="icon-btn"
+              onClick={handleLogout}
+              title="Logout"
+            />
           )}
         </div>
       </header>
-      <main className="App-main">
-        <div className="action-buttons">
-          <button
-            onClick={() => handleAction("summarize_page", "Summarize")}
-            disabled={isLoadingAction}
-          >
-            {isLoadingAction && loadingActionName === "Summarize"
-              ? "Summarizing..."
-              : "Summarize Page"}
-          </button>
-          <button
-            onClick={() => handleAction("draft_email", "Draft")}
-            disabled={!isGoogleLoggedIn || isLoadingAction}
-          >
-            {isLoadingAction && loadingActionName === "Draft"
-              ? "Drafting..."
-              : "Draft Email"}
-          </button>
-          <button
-            onClick={() => handleAction("create_notion_doc", "Notion")}
-            disabled={isLoadingAction}
-          >
-            {isLoadingAction && loadingActionName === "Notion"
-              ? "Creating..."
-              : "Create Notion Doc"}
-          </button>
-          <button
-            onClick={handleFindMeetingTimes}
-            disabled={!isGoogleLoggedIn || isFindingTimes}
-          >
-            {isFindingTimes ? "Finding Times..." : "Find Meeting Times"}
-          </button>
-          <button
-            onClick={() => handleAction("summarize_youtube_video", "YouTube")}
-            disabled={isLoadingAction}
-          >
-            {isLoadingAction && loadingActionName === "YouTube"
-              ? "Summarizing..."
-              : "Summarize YouTube Video"}
-          </button>
-        </div>
 
-        <div className="composer-container">
-          <h3>AI Content Composer</h3>
-          <div className="composer-input-group">
-            <textarea
-              value={composeRequest}
-              onChange={(e) => setComposeRequest(e.target.value)}
-              placeholder="e.g., Write a LinkedIn post about this..."
-              rows={2}
-              disabled={isComposing}
-            />
-            <button onClick={handleCompose} disabled={isComposing}>
-              {isComposing ? "Generating..." : "Generate"}
-            </button>
-          </div>
-          {composedText && (
-            <div className="results-container">
-              <h4>Generated Content:</h4>
-              <pre className="composed-text">{composedText}</pre>
+      {/* Main Grid */}
+      <div className="main-grid">
+        {/* Left Column */}
+        <div className="grid-column">
+          <div className="card">
+            <h3 className="card-title">
+              <Bot className="title-icon text-blue" /> AI Content Composer
+            </h3>
+            <div className="card-content">
+              <textarea
+                placeholder="Write a LinkedIn post about this..."
+                className="input-textarea"
+                value={composeRequest}
+                onChange={(e) => setComposeRequest(e.target.value)}
+                disabled={isComposing}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={handleCompose}
+                disabled={isComposing}
+              >
+                {isComposing ? "Generating..." : "Generate"}
+              </button>
+              {composedText && <pre className="result-box">{composedText}</pre>}
             </div>
-          )}
-        </div>
+          </div>
 
-        <div className="research-container">
-          <h3>Asynchronous Research</h3>
-          <div className="research-input-group">
-            <input
-              type="text"
-              value={researchTopic}
-              onChange={(e) => setResearchTopic(e.target.value)}
-              placeholder="Enter a topic to research..."
-              disabled={isResearching}
-            />
-            <button onClick={handleStartResearch} disabled={isResearching}>
-              {isResearching ? "Starting..." : "Start Research"}
-            </button>
+          <div className="card">
+            <div className="card-title-wrapper">
+              <h3 className="card-title">
+                <Search className="title-icon text-green" /> Asynchronous
+                Research
+              </h3>
+              <button
+                className="card-title-toggle"
+                onClick={() => setIsResearchTasksVisible((p) => !p)}
+              >
+                {isResearchTasksVisible ? <ChevronUp /> : <ChevronDown />}
+              </button>
+            </div>
+            <div className="card-content">
+              <input
+                type="text"
+                placeholder="Enter a topic to research..."
+                className="input-field"
+                value={researchTopic}
+                onChange={(e) => setResearchTopic(e.target.value)}
+                disabled={isResearching}
+              />
+              <button
+                className="btn btn-secondary"
+                onClick={handleStartResearch}
+                disabled={isResearching}
+              >
+                {isResearching ? "Starting..." : "Start Research"}
+              </button>
+            </div>
+            {isResearchTasksVisible && (
+              <div className="task-list">
+                <h4 className="list-subtitle">
+                  <FileText className="subtitle-icon" /> Research Tasks
+                </h4>
+                {researchTasks.length > 0 ? (
+                  researchTasks.map((task) => {
+                    const isExpanded = !!expandedTasks[task.id];
+                    const isLongText = task.result && task.result.length > 150;
+                    return (
+                      <div key={task.id} className="list-item">
+                        <div className="list-item-header">
+                          <h5 className="list-item-title">{task.topic}</h5>
+                          {task.status === "completed" ? (
+                            <CheckCircle className="icon-status-success" />
+                          ) : task.status === "in-progress" ? (
+                            <div className="status-dot-yellow animate-pulse" />
+                          ) : null}
+                        </div>
+                        {task.status === "completed" && (
+                          <>
+                            <p className="list-item-summary">
+                              {isLongText && !isExpanded
+                                ? `${task.result.substring(0, 150)}...`
+                                : task.result}
+                            </p>
+                            {isLongText && (
+                              <button
+                                className="btn-show-more"
+                                onClick={() => toggleTaskExpansion(task.id)}
+                              >
+                                {isExpanded ? "Show less" : "Show more"}
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {task.status === "failed" && (
+                          <p className="list-item-summary text-red">
+                            {task.error}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="empty-state">No research tasks initiated.</p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <h3 className="card-title">Quick Actions</h3>
+            <div className="quick-actions-grid">
+              <button
+                className="btn btn-tertiary"
+                onClick={() => handleAction("summarize_page", "Summarize")}
+                disabled={isLoadingAction}
+              >
+                <FileText className="btn-icon" />
+                <span>
+                  {isLoadingAction && loadingActionName === "Summarize"
+                    ? "..."
+                    : "Summarize Page"}
+                </span>
+              </button>
+              <button
+                className="btn btn-tertiary"
+                onClick={() => handleAction("draft_email", "Draft")}
+                disabled={!isGoogleLoggedIn || isLoadingAction}
+              >
+                <Mail className="btn-icon" />
+                <span>
+                  {isLoadingAction && loadingActionName === "Draft"
+                    ? "..."
+                    : "Draft Email"}
+                </span>
+              </button>
+              <button
+                className="btn btn-tertiary"
+                onClick={() => handleAction("create_notion_doc", "Notion")}
+                disabled={isLoadingAction}
+              >
+                <BookOpen className="btn-icon" />
+                <span>
+                  {isLoadingAction && loadingActionName === "Notion"
+                    ? "..."
+                    : "Notion Doc"}
+                </span>
+              </button>
+              <button
+                className="btn btn-tertiary"
+                onClick={handleFindMeetingTimes}
+                disabled={!isGoogleLoggedIn || isFindingTimes}
+              >
+                <Calendar className="btn-icon" />
+                <span>{isFindingTimes ? "..." : "Meeting Times"}</span>
+              </button>
+            </div>
+            {/* <button
+              className="btn btn-tertiary full-width"
+              onClick={() => handleAction("summarize_youtube_video", "YouTube")}
+              disabled={isLoadingAction}
+            >
+              <Youtube className="btn-icon" />
+              <span>
+                {isLoadingAction && loadingActionName === "YouTube"
+                  ? "Summarizing..."
+                  : "Summarize YouTube Video"}
+              </span>
+            </button> */}
+            {summary && <div className="result-box">{summary}</div>}
+            {meetingSlots.length > 0 && (
+              <div className="result-box">
+                <strong>Available Times:</strong>
+                <ul>
+                  {meetingSlots.map((slot, i) => (
+                    <li key={i}>{slot.toLocaleString()}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </div>
 
-        {actionStatus && <p className="success-message">{actionStatus}</p>}
-        {summary && <div className="summary-box">{summary}</div>}
-        {error && <p className="error">{error}</p>}
-
-        {meetingSlots.length > 0 && (
-          <div className="results-container">
-            <h3>Available Meeting Times:</h3>
-            <ul className="slots-list">
-              {meetingSlots.map((slot, index) => (
-                <li key={index}>{slot.toLocaleString()}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <hr />
-
-        <div className="stock-container">
-          <h2>Stock Price Monitor</h2>
-          <div className="stock-input-group">
-            <input
-              type="text"
-              value={stockTicker}
-              onChange={(e) => setStockTicker(e.target.value.toUpperCase())}
-              placeholder="e.g., GOOGL"
-              disabled={isSettingAlert}
-            />
-            <input
-              type="number"
-              value={targetPrice}
-              onChange={(e) => setTargetPrice(e.target.value)}
-              placeholder="Target Price"
-              disabled={isSettingAlert}
-            />
-            <button onClick={handleSetStockAlert} disabled={isSettingAlert}>
-              {isSettingAlert ? "Setting..." : "Set Alert"}
-            </button>
-          </div>
-          {stockAlerts.length > 0 ? (
-            <ul className="stock-alerts-list">
-              {stockAlerts.map((alert) => (
-                <li
-                  key={alert.id}
-                  className={`stock-item status-${alert.status}`}
-                >
-                  <span>
-                    {alert.ticker} > ${alert.targetPrice}
-                  </span>
-                  <span>({alert.status})</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No active stock alerts.</p>
-          )}
-        </div>
-
-        <div className="orders-container">
-          <h2>My Orders</h2>
-          <button
-            onClick={handleScanOrders}
-            disabled={!isGoogleLoggedIn || isScanning}
-          >
-            {isScanning ? "Scanning Gmail..." : "Scan for New Orders"}
-          </button>
-          {isGoogleLoggedIn ? (
-            orders.length > 0 ? (
-              <ul className="orders-list">
-                {orders.map((order) => (
-                  <li key={order.id} className="order-item">
-                    <p>
-                      <strong>Item:</strong> {order.itemName}
+        {/* Middle Column */}
+        <div className="grid-column">
+          <div className="card">
+            <div className="card-title-wrapper">
+              <h3 className="card-title">
+                <GitBranch className="title-icon text-purple" /> GitHub Feed
+              </h3>
+              <button
+                className="card-title-toggle"
+                onClick={() => setIsGithubFeedVisible((p) => !p)}
+              >
+                {isGithubFeedVisible ? <ChevronUp /> : <ChevronDown />}
+              </button>
+            </div>
+            {isGithubFeedVisible && (
+              <div className="card-content">
+                {isGithubLoggedIn ? (
+                  loading ? (
+                    <p className="empty-state">Loading feed...</p>
+                  ) : notifications.length > 0 ? (
+                    notifications.map((notif) => (
+                      <div
+                        key={notif.id}
+                        className="list-item interactive"
+                        onClick={() => handleNotificationClick(notif)}
+                      >
+                        <div className="list-item-content-icon">
+                          <div className="list-icon-wrapper-purple">
+                            <Code className="list-icon" />
+                          </div>
+                          <div>
+                            <p className="list-item-summary">{notif.message}</p>
+                            <p className="list-item-meta">
+                              {notif.repo} •{" "}
+                              {new Date(
+                                notif.timestamp.seconds * 1000
+                              ).toLocaleTimeString()}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="empty-state">
+                      No notifications. Push a commit or open a PR.
                     </p>
-                    <p>
-                      <strong>ETA:</strong> {order.eta}
-                    </p>
-                    <p>
-                      <strong>Tracking:</strong> {order.trackingNumber}
-                    </p>
-                    {order.status && (
-                      <p>
-                        <strong>Status:</strong> {order.status}
-                      </p>
-                    )}
-                    {order.trackingNumber &&
-                      order.trackingNumber !== "N/A" &&
-                      !order.aftershipTrackingId && (
-                        <button
-                          onClick={() => handleStartTracking(order)}
-                          disabled={trackingOrderId === order.id}
-                          className="track-button"
-                        >
-                          {trackingOrderId === order.id
-                            ? "Starting..."
-                            : "Start Live Tracking"}
-                        </button>
-                      )}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No orders found yet.</p>
-            )
-          ) : (
-            <p>Login with Google to track your orders.</p>
-          )}
-        </div>
-
-        <div className="research-tasks-container">
-          <h2>Research Tasks</h2>
-          {researchTasks.length > 0 ? (
-            <ul className="research-list">
-              {researchTasks.map((task) => (
-                <li
-                  key={task.id}
-                  className={`research-item status-${task.status}`}
-                >
-                  <div className="task-header">
-                    <strong>{task.topic}</strong>
-                    <span>{task.status}</span>
-                  </div>
-                  {task.status === "completed" && (
-                    <p className="task-result">{task.result}</p>
-                  )}
-                  {task.status === "failed" && (
-                    <p className="task-result error">{task.error}</p>
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No research tasks yet.</p>
-          )}
-        </div>
-
-        <div className="snippets-container">
-          <h2>My Snippets</h2>
-          {snippets.length > 0 ? (
-            <ul className="snippets-list">
-              {snippets.map((snippet) => (
-                <li key={snippet.id} className="snippet-item">
-                  <p className="snippet-text">"{snippet.text}"</p>
-                  <a
-                    href={snippet.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="snippet-source"
-                  >
-                    Source
-                  </a>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>
-              No snippets saved yet. Highlight text on a page and right-click to
-              save.
-            </p>
-          )}
-        </div>
-
-        <h2>GitHub Feed</h2>
-        {isGithubLoggedIn ? (
-          loading ? (
-            <p>Loading feed...</p>
-          ) : notifications.length > 0 ? (
-            <ul className="notification-feed">
-              {notifications.map((notif) => (
-                <li
-                  key={notif.id}
-                  className="notification-item"
-                  onClick={() => handleNotificationClick(notif)}
-                >
-                  <p className="message">{notif.message}</p>
-                  <p className="meta">
-                    {notif.repo} -{" "}
-                    {new Date(notif.timestamp.seconds * 1000).toLocaleString()}
+                  )
+                ) : (
+                  <p className="empty-state">
+                    Login with GitHub to see your feed.
                   </p>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p>No new notifications. Push a commit or open a PR to test.</p>
-          )
-        ) : (
-          <p>Login with GitHub to see your feed.</p>
-        )}
-      </main>
+                )}
+              </div>
+            )}
+          </div>
 
+          <div className="card">
+            <div className="card-title-wrapper">
+              <h3 className="card-title">
+                <Code className="title-icon text-cyan" /> My Snippets
+              </h3>
+              <button
+                className="card-title-toggle"
+                onClick={() => setIsSnippetsVisible((p) => !p)}
+              >
+                {isSnippetsVisible ? <ChevronUp /> : <ChevronDown />}
+              </button>
+            </div>
+            {isSnippetsVisible && (
+              <div className="card-content">
+                {snippets.length > 0 ? (
+                  snippets.map((snippet) => (
+                    <div key={snippet.id} className="list-item">
+                      <div className="list-item-header">
+                        <a
+                          href={snippet.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="list-item-title"
+                        >
+                          {snippet.text}
+                        </a>
+                        <span className="tag-cyan">
+                          {new URL(snippet.url).hostname}
+                        </span>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="empty-state">
+                    No snippets saved. Highlight text and right-click to save.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-title-wrapper">
+              <h3 className="card-title">
+                <Package className="title-icon" /> Recent Orders
+              </h3>
+              <button
+                className="card-title-toggle"
+                onClick={() => setIsOrdersVisible((p) => !p)}
+              >
+                {isOrdersVisible ? <ChevronUp /> : <ChevronDown />}
+              </button>
+            </div>
+            {isOrdersVisible && (
+              <div className="card-content">
+                <button
+                  className="btn btn-secondary full-width"
+                  onClick={handleScanOrders}
+                  disabled={!isGoogleLoggedIn || isScanning}
+                >
+                  {isScanning ? "Scanning Gmail..." : "Scan for New Orders"}
+                </button>
+                <div className="task-list">
+                  {isGoogleLoggedIn ? (
+                    orders.length > 0 ? (
+                      orders.map((order) => (
+                        <div key={order.id} className="list-item">
+                          <p className="list-item-title">{order.itemName}</p>
+                          <p className="list-item-meta">
+                            ETA: {order.eta} • Tracking: {order.trackingNumber}
+                          </p>
+                          {order.status && (
+                            <p className="list-item-meta">
+                              Status: {order.status}
+                            </p>
+                          )}
+                          {order.trackingNumber &&
+                            order.trackingNumber !== "N/A" &&
+                            !order.aftershipTrackingId && (
+                              <button
+                                className="btn-track"
+                                onClick={() => handleStartTracking(order)}
+                                disabled={trackingOrderId === order.id}
+                              >
+                                {trackingOrderId === order.id
+                                  ? "Starting..."
+                                  : "Start Live Tracking"}
+                              </button>
+                            )}
+                        </div>
+                      ))
+                    ) : (
+                      <p className="empty-state">No orders found yet.</p>
+                    )
+                  ) : (
+                    <p className="empty-state">
+                      Login with Google to track your orders.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right Column */}
+        <div className="grid-column">
+          <div className="card">
+            <h3 className="card-title">
+              <TrendingUp className="title-icon text-green" /> Stock Price
+              Monitor
+            </h3>
+            <div className="card-content">
+              <input
+                type="text"
+                placeholder="e.g. GOOGL"
+                className="input-field"
+                value={stockTicker}
+                onChange={(e) => setStockTicker(e.target.value.toUpperCase())}
+                disabled={isSettingAlert}
+              />
+              <input
+                type="number"
+                placeholder="Target Price"
+                className="input-field"
+                value={targetPrice}
+                onChange={(e) => setTargetPrice(e.target.value)}
+                disabled={isSettingAlert}
+              />
+              <button
+                className="btn btn-secondary"
+                onClick={handleSetStockAlert}
+                disabled={isSettingAlert}
+              >
+                {isSettingAlert ? "Setting..." : "Set Alert"}
+              </button>
+            </div>
+            <div className="task-list">
+              <h4 className="list-subtitle">Active Alerts</h4>
+              {stockAlerts.length > 0 ? (
+                stockAlerts.map((alert) => (
+                  <div key={alert.id} className={`active-alert-item ...`}>
+                    <span>
+                      {alert.ticker} > ${alert.targetPrice}
+                    </span>
+                    <span>({alert.status})</span>
+                    {/* ADD THIS BUTTON */}
+                    <button
+                      className="btn-icon-delete"
+                      onClick={() => handleDeleteStockAlert(alert.id)}
+                      title="Delete this alert"
+                    >
+                      <X size={16} />
+                    </button>
+                    {/* END OF ADDED BUTTON */}
+                  </div>
+                ))
+              ) : (
+                <p className="empty-state">No active stock alerts.</p>
+              )}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title-wrapper">
+              <h3 className="card-title">
+                <DollarSign className="title-icon text-yellow" /> Stock Alerts
+              </h3>
+              <button
+                className="card-title-toggle"
+                onClick={() => setIsStockAlertsVisible((p) => !p)}
+              >
+                {isStockAlertsVisible ? <ChevronUp /> : <ChevronDown />}
+              </button>
+            </div>
+            {isStockAlertsVisible && (
+              <div className="card-content">
+                {stockAlerts.filter((a) => a.status === "triggered").length >
+                0 ? (
+                  stockAlerts
+                    .filter((a) => a.status === "triggered")
+                    .map((alert) => (
+                      <div key={alert.id} className="list-item-success">
+                        <div className="list-item-content-icon">
+                          <div className="list-icon-wrapper-green">
+                            <TrendingUp className="list-icon" />
+                          </div>
+                          <div>
+                            <p className="list-item-title">
+                              📈 {alert.ticker} reached target of $
+                              {alert.targetPrice}!
+                            </p>
+                            <p className="list-item-summary-green">
+                              Current price: $
+                              {alert.currentPrice || "Fetching..."}
+                            </p>
+                            <p className="list-item-meta">
+                              {new Date(
+                                alert.createdAt.seconds * 1000
+                              ).toLocaleString()}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                ) : (
+                  <p className="empty-state">No triggered alerts.</p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Global Messages */}
+      {error && <div className="global-message error-message">{error}</div>}
+      {actionStatus && (
+        <div className="global-message success-message">{actionStatus}</div>
+      )}
+
+      {/* PR Review Modal */}
       {isReviewModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
@@ -1988,9 +1059,9 @@ function App() {
               className="modal-close"
               onClick={() => setIsReviewModalOpen(false)}
             >
-              X
+              <X />
             </button>
-            <h2>AI Pull Request Review</h2>
+            <h2 className="card-title">AI Pull Request Review</h2>
             {isReviewLoading ? (
               <p>Analyzing code changes...</p>
             ) : (
