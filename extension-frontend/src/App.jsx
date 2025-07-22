@@ -1204,9 +1204,6 @@
 //     </div>
 //   );
 // }
-
-// export default App;
-
 import React, { useState, useEffect } from "react";
 import { initializeApp } from "firebase/app";
 import {
@@ -1256,12 +1253,13 @@ function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [trackingOrderId, setTrackingOrderId] = useState(null);
   const [snippets, setSnippets] = useState([]);
-
-  // --- NEW: State for Stock Monitor ---
   const [stockTicker, setStockTicker] = useState("");
   const [targetPrice, setTargetPrice] = useState("");
   const [stockAlerts, setStockAlerts] = useState([]);
   const [isSettingAlert, setIsSettingAlert] = useState(false);
+  const [composeRequest, setComposeRequest] = useState("");
+  const [composedText, setComposedText] = useState("");
+  const [isComposing, setIsComposing] = useState(false);
 
   const isExtension =
     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
@@ -1272,6 +1270,7 @@ function App() {
     setError("");
     setActionStatus("");
     setMeetingSlots([]);
+    setComposedText("");
   };
 
   // --- Effect for Authentication State ---
@@ -1378,7 +1377,7 @@ function App() {
     return () => unsubscribe();
   }, []);
 
-  // --- NEW: Effect for Listening to Stock Alerts ---
+  // --- Effect for Listening to Stock Alerts ---
   useEffect(() => {
     const q = query(
       collection(db, "stock_alerts"),
@@ -1427,6 +1426,32 @@ function App() {
       setIsLoadingAction(false);
       setLoadingActionName("");
     });
+  };
+
+  const handleCompose = () => {
+    if (!composeRequest.trim()) {
+      setError("Please enter a request for the composer.");
+      return;
+    }
+    setIsComposing(true);
+    resetActionStates();
+
+    chrome.runtime.sendMessage(
+      {
+        action: "compose_content",
+        userRequest: composeRequest,
+      },
+      (response) => {
+        if (response && response.error) {
+          setError(response.error);
+        } else if (response && response.composedText) {
+          setComposedText(response.composedText);
+        } else {
+          setError("Received an unexpected response from the composer.");
+        }
+        setIsComposing(false);
+      }
+    );
   };
 
   const handleReviewPR = async (prUrl) => {
@@ -1719,6 +1744,36 @@ function App() {
           >
             {isFindingTimes ? "Finding Times..." : "Find Meeting Times"}
           </button>
+          <button
+            onClick={() => handleAction("summarize_youtube_video", "YouTube")}
+            disabled={isLoadingAction}
+          >
+            {isLoadingAction && loadingActionName === "YouTube"
+              ? "Summarizing..."
+              : "Summarize YouTube Video"}
+          </button>
+        </div>
+
+        <div className="composer-container">
+          <h3>AI Content Composer</h3>
+          <div className="composer-input-group">
+            <textarea
+              value={composeRequest}
+              onChange={(e) => setComposeRequest(e.target.value)}
+              placeholder="e.g., Write a LinkedIn post about this..."
+              rows={2}
+              disabled={isComposing}
+            />
+            <button onClick={handleCompose} disabled={isComposing}>
+              {isComposing ? "Generating..." : "Generate"}
+            </button>
+          </div>
+          {composedText && (
+            <div className="results-container">
+              <h4>Generated Content:</h4>
+              <pre className="composed-text">{composedText}</pre>
+            </div>
+          )}
         </div>
 
         <div className="research-container">
