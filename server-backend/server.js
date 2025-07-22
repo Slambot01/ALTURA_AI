@@ -35,6 +35,76 @@ const notionParentPageId = process.env.NOTION_PARENT_PAGE_ID;
 const app = express();
 const PORT = process.env.PORT || 3001;
 app.use(cors());
+
+// --- Webhook Route (Requires Raw Body Parser) ---
+app.post(
+  "/api/github/webhook",
+  express.raw({ type: "application/json", limit: "5mb" }),
+  async (req, res) => {
+    console.log("Webhook event received. Validating signature...");
+
+    try {
+      const signature = crypto
+        .createHmac("sha256", process.env.GITHUB_WEBHOOK_SECRET)
+        .update(req.body)
+        .digest("hex");
+      const trusted = Buffer.from(`sha256=${signature}`, "ascii");
+      const untrusted = Buffer.from(
+        req.headers["x-hub-signature-256"] || "",
+        "ascii"
+      );
+
+      if (!crypto.timingSafeEqual(trusted, untrusted)) {
+        console.error("Webhook validation failed! Secrets do not match.");
+        return res.status(401).send("Invalid signature");
+      }
+
+      console.log("Signature validated. Processing event...");
+      const githubEvent = req.headers["x-github-event"];
+      const data = JSON.parse(req.body);
+
+      let notification = {
+        read: false,
+        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      if (githubEvent === "pull_request") {
+        console.log("Processing a 'pull_request' event.");
+        const pr = data.pull_request;
+        notification.type = "pr";
+        notification.repo = data.repository.full_name; // Added for context
+        notification.message = `PR #${data.number} ${data.action}: "${pr.title}"`;
+        notification.url = pr.html_url;
+        notification.user = pr.user.login;
+      } else if (githubEvent === "push") {
+        console.log("Processing a 'push' event.");
+        const pusher = data.pusher.name;
+        const branch = data.ref.split("/").pop();
+        notification.type = "push";
+        notification.repo = data.repository.full_name; // Added for context
+        notification.message = `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`;
+        notification.url = data.compare;
+        notification.user = pusher;
+      } else {
+        // If the event is not one we handle, just acknowledge it.
+        console.log(`Received unhandled event type: ${githubEvent}`);
+        return res.status(200).send("Event received but not processed.");
+      }
+
+      console.log("Attempting to save notification to Firestore...");
+      await db.collection("notifications").add(notification);
+      console.log("✅ Successfully saved notification to Firestore.");
+
+      res.status(200).send("Event successfully processed.");
+    } catch (error) {
+      // This will now catch any error that happens and log it.
+      console.error("--- FATAL WEBHOOK ERROR ---");
+      console.error(error);
+      console.error("---------------------------");
+      res.status(500).send("Internal Server Error occurred.");
+    }
+  }
+);
 app.use(express.json({ limit: "5mb" }));
 
 // --- Routes (Organized by Function) ---
@@ -143,58 +213,6 @@ app.get("/api/notifications", async (req, res) => {
 });
 
 // --- Webhook Route (Requires Raw Body Parser) ---
-app.post(
-  "/api/github/webhook",
-  express.raw({ type: "application/json", limit: "5mb" }),
-  async (req, res) => {
-    const signature = crypto
-      .createHmac("sha256", process.env.GITHUB_WEBHOOK_SECRET)
-      .update(req.body)
-      .digest("hex");
-    const trusted = Buffer.from(`sha256=${signature}`, "ascii");
-    const untrusted = Buffer.from(
-      req.headers["x-hub-signature-256"] || "",
-      "ascii"
-    );
-
-    if (!crypto.timingSafeEqual(trusted, untrusted)) {
-      console.error(
-        "Webhook validation failed! Make sure GITHUB_WEBHOOK_SECRET is set."
-      );
-      return res.status(401).send("Invalid signature");
-    }
-
-    const githubEvent = req.headers["x-github-event"];
-    const data = JSON.parse(req.body);
-
-    try {
-      let notification = {
-        read: false,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-      };
-
-      if (githubEvent === "pull_request") {
-        const pr = data.pull_request;
-        notification.type = "pr";
-        notification.message = `PR #${data.number} ${data.action}: "${pr.title}"`;
-        notification.url = pr.html_url;
-        notification.user = pr.user.login;
-        await db.collection("notifications").add(notification);
-      } else if (githubEvent === "push") {
-        const pusher = data.pusher.name;
-        const branch = data.ref.split("/").pop();
-        notification.type = "push";
-        notification.message = `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`;
-        notification.url = data.compare;
-        notification.user = pusher;
-        await db.collection("notifications").add(notification);
-      }
-    } catch (error) {
-      console.error("Error processing webhook:", error);
-    }
-    res.status(200).send("Event received");
-  }
-);
 
 // --- Action Routes ---
 
