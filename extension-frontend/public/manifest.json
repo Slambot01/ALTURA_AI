@@ -8,11 +8,12 @@
     "storage",
     "scripting",
     "alarms",
-    "contextMenus"
+    "contextMenus",
+    "sidePanel"
   ],
   "host_permissions": ["<all_urls>"],
   "action": {
-    "default_popup": "index.html"
+    "default_title": "Open AlturaAI Sidebar"
   },
   "background": {
     "service_worker": "background.js",
@@ -23,5 +24,8 @@
       "matches": ["<all_urls>"],
       "js": ["content.js"]
     }
-  ]
+  ],
+  "side_panel": {
+    "default_path": "index.html"
+  }
 }

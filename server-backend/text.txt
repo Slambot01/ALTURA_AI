@@ -1,0 +1,5 @@
+start the frontend by npm run build
+
+backend by node server.js
+
+also u have to start ngrok in order to make work the github frature...check this on gpt how to start it
