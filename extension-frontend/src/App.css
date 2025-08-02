@@ -218,12 +218,12 @@ body {
 }
 
 .status-indicator-green .status-dot {
-  background-color: rgb(212, 215, 216);
+  background-color: rgb(143, 197, 245);
   box-shadow: 0 0 0 1px rgba(75, 111, 134, 0.5);
 }
 
 .status-indicator-purple .status-dot {
-  background-color: rgb(212, 215, 216);
+  background-color: rgb(143, 197, 245);
   box-shadow: 0 0 0 1px rgba(75, 111, 134, 0.5);
 }
 
