@@ -4,26 +4,344 @@
     <meta charset="UTF-8" />
     <title>Authentication Successful</title>
     <style>
+      /* Reset and base styles */
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
       body {
-        font-family: system-ui, sans-serif;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          Oxygen, Ubuntu, Cantarell, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        position: relative;
+      }
+
+      /* Animated background particles */
+      body::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-image: radial-gradient(
+            circle at 20% 50%,
+            rgba(255, 255, 255, 0.1) 1px,
+            transparent 1px
+          ),
+          radial-gradient(
+            circle at 80% 20%,
+            rgba(255, 255, 255, 0.1) 1px,
+            transparent 1px
+          ),
+          radial-gradient(
+            circle at 40% 80%,
+            rgba(255, 255, 255, 0.1) 1px,
+            transparent 1px
+          );
+        background-size: 300px 300px, 200px 200px, 250px 250px;
+        animation: float 20s ease-in-out infinite;
+        pointer-events: none;
+      }
+
+      @keyframes float {
+        0%,
+        100% {
+          transform: translateY(0px) translateX(0px);
+        }
+        25% {
+          transform: translateY(-20px) translateX(10px);
+        }
+        50% {
+          transform: translateY(-10px) translateX(-5px);
+        }
+        75% {
+          transform: translateY(-15px) translateX(8px);
+        }
+      }
+
+      /* Main container */
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        padding: 3rem 2.5rem;
         text-align: center;
-        padding-top: 50px;
+        box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15),
+          0 0 0 1px rgba(255, 255, 255, 0.3);
+        max-width: 400px;
+        width: 90%;
+        position: relative;
+        animation: slideIn 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
+        transform-origin: center;
+      }
+
+      @keyframes slideIn {
+        0% {
+          opacity: 0;
+          transform: scale(0.8) translateY(30px);
+        }
+        100% {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+
+      /* Success icon container */
+      .success-icon {
+        margin-bottom: 2rem;
+        position: relative;
+        display: inline-block;
+      }
+
+      /* Checkmark SVG */
+      .checkmark {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        display: block;
+        stroke-width: 3;
+        stroke: #4caf50;
+        stroke-miterlimit: 10;
+        box-shadow: inset 0px 0px 0px #4caf50;
+        animation: fill 0.4s ease-in-out 0.4s forwards,
+          scale 0.3s ease-in-out 0.9s both;
+        position: relative;
+      }
+
+      .checkmark__circle {
+        stroke-dasharray: 166;
+        stroke-dashoffset: 166;
+        stroke-width: 3;
+        stroke-miterlimit: 10;
+        stroke: #4caf50;
+        fill: rgba(76, 175, 80, 0.1);
+        animation: stroke 0.6s cubic-bezier(0.65, 0, 0.45, 1) forwards;
+      }
+
+      .checkmark__check {
+        transform-origin: 50% 50%;
+        stroke-dasharray: 48;
+        stroke-dashoffset: 48;
+        stroke: #4caf50;
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+        animation: stroke-check 0.3s cubic-bezier(0.65, 0, 0.45, 1) 0.8s
+          forwards;
+      }
+
+      @keyframes stroke {
+        100% {
+          stroke-dashoffset: 0;
+        }
+      }
+
+      @keyframes stroke-check {
+        100% {
+          stroke-dashoffset: 0;
+        }
+      }
+
+      @keyframes scale {
+        0%,
+        100% {
+          transform: none;
+        }
+        50% {
+          transform: scale3d(1.1, 1.1, 1);
+        }
+      }
+
+      @keyframes fill {
+        100% {
+          box-shadow: inset 0px 0px 0px 30px #4caf50;
+        }
+      }
+
+      /* Success icon glow effect */
+      .success-icon::after {
+        content: "";
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 100px;
+        height: 100px;
+        background: radial-gradient(
+          circle,
+          rgba(76, 175, 80, 0.3) 0%,
+          transparent 70%
+        );
+        border-radius: 50%;
+        transform: translate(-50%, -50%);
+        animation: pulse 2s ease-in-out infinite;
+        z-index: -1;
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          transform: translate(-50%, -50%) scale(1);
+          opacity: 0.8;
+        }
+        50% {
+          transform: translate(-50%, -50%) scale(1.2);
+          opacity: 0.4;
+        }
+      }
+
+      /* Typography */
+      h1 {
+        color: #2c3e50;
+        font-size: 2rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        letter-spacing: -0.5px;
+        animation: fadeInUp 0.6s ease-out 0.3s both;
+      }
+
+      .subtitle {
+        color: #64748b;
+        font-size: 1.1rem;
+        font-weight: 400;
+        margin-bottom: 2rem;
+        line-height: 1.5;
+        animation: fadeInUp 0.6s ease-out 0.5s both;
+      }
+
+      /* Status message */
+      .status-message {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.75rem;
+        color: #64748b;
+        font-size: 0.9rem;
+        font-weight: 500;
+        opacity: 0;
+        animation: fadeInUp 0.6s ease-out 1.2s both;
+      }
+
+      /* Spinner animation */
+      .spinner {
+        width: 16px;
+        height: 16px;
+        border: 2px solid #e5e7eb;
+        border-top: 2px solid #667eea;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+      }
+
+      @keyframes spin {
+        0% {
+          transform: rotate(0deg);
+        }
+        100% {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Fade in up animation */
+      @keyframes fadeInUp {
+        0% {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      /* Responsive design */
+      @media (max-width: 480px) {
+        .container {
+          padding: 2rem 1.5rem;
+          margin: 1rem;
+        }
+
+        h1 {
+          font-size: 1.75rem;
+        }
+
+        .checkmark {
+          width: 70px;
+          height: 70px;
+        }
+
+        .success-icon::after {
+          width: 90px;
+          height: 90px;
+        }
+      }
+
+      /* Reduced motion accessibility */
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          animation-duration: 0.01ms !important;
+          animation-iteration-count: 1 !important;
+          transition-duration: 0.01ms !important;
+        }
+
+        body::before {
+          animation: none;
+        }
+
+        .success-icon::after {
+          animation: none;
+        }
       }
     </style>
   </head>
   <body>
-    <h1>Authentication Successful!</h1>
-    <p>You can now close this tab.</p>
+    <div class="container">
+      <div class="success-icon">
+        <svg
+          class="checkmark"
+          xmlns="http://www.w3.org/2000/svg"
+          viewBox="0 0 52 52"
+        >
+          <circle class="checkmark__circle" cx="26" cy="26" r="25" />
+          <path class="checkmark__check" d="m14.1,27.2l7.1,7.2 16.7-16.8" />
+        </svg>
+      </div>
+      <h1>Authentication Successful!</h1>
+      <p class="subtitle">You can now close this tab.</p>
+      <div class="status-message">
+        <div class="spinner"></div>
+        <span>Closing tab...</span>
+      </div>
+    </div>
+
     <script>
       // When this page loads, it sets a value in the extension's storage
       // to indicate that the user is now logged in.
-      chrome.storage.local.set({ isLoggedIn: true }, () => {
-        console.log("Login status saved.");
-        // The page will close itself after 1 second.
+      if (typeof chrome !== "undefined" && chrome.storage) {
+        chrome.storage.local.set({ isLoggedIn: true }, () => {
+          console.log("Login status saved.");
+          // The page will close itself after a few seconds.
+          setTimeout(() => {
+            window.close();
+          }, 1000);
+        });
+      } else {
+        console.log(
+          "Chrome extension API not available - running in standalone mode"
+        );
         setTimeout(() => {
-          window.close();
+          console.log("Would close tab in extension environment");
         }, 1000);
-      });
+      }
     </script>
   </body>
 </html>

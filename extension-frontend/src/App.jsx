@@ -27,12 +27,14 @@ import {
   Package,
   ChevronUp,
   ChevronDown,
+  Lock,
+  Trash2,
 } from "lucide-react";
 
 import "./App.css";
 
 // --- Firebase Configuration ---
-// --- Firebase Configuration ---
+
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -41,6 +43,7 @@ const firebaseConfig = {
   messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
   appId: import.meta.env.VITE_FIREBASE_APP_ID,
 };
+
 const GoogleIcon = () => (
   <svg
     className="login-icon"
@@ -88,7 +91,7 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 function App() {
-  // --- Main State Management (UNCHANGED) ---
+  // --- Main State Management ---
   const [isGoogleLoggedIn, setIsGoogleLoggedIn] = useState(false);
   const [isGithubLoggedIn, setIsGithubLoggedIn] = useState(false);
   const [notifications, setNotifications] = useState([]);
@@ -117,8 +120,10 @@ function App() {
   const [composeRequest, setComposeRequest] = useState("");
   const [composedText, setComposedText] = useState("");
   const [isComposing, setIsComposing] = useState(false);
-
-  // --- NEW State for UI Visibility ---
+  const [deletingNotificationId, setDeletingNotificationId] = useState(null);
+  const [deletingSnippetId, setDeletingSnippetId] = useState(null);
+  const [deletingOrderId, setDeletingOrderId] = useState(null);
+  // --- UI Visibility State ---
   const [expandedTasks, setExpandedTasks] = useState({});
   const [isGithubFeedVisible, setIsGithubFeedVisible] = useState(false);
   const [isSnippetsVisible, setIsSnippetsVisible] = useState(false);
@@ -129,12 +134,15 @@ function App() {
   const isExtension =
     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
 
-  // --- NEW: Helper function to toggle individual task expansion ---
+  // Check if user is authenticated (either Google OR GitHub)
+  const isAuthenticated = isGoogleLoggedIn || isGithubLoggedIn;
+
+  // Helper function to toggle individual task expansion
   const toggleTaskExpansion = (taskId) => {
     setExpandedTasks((prev) => ({ ...prev, [taskId]: !prev[taskId] }));
   };
 
-  // --- Helper function to reset UI states (UNCHANGED) ---
+  // Helper function to reset UI states
   const resetActionStates = () => {
     setSummary("");
     setError("");
@@ -180,13 +188,11 @@ function App() {
       try {
         const response = await fetch("http://localhost:3001/api/notifications");
         if (!response.ok) throw new Error("Failed to fetch notifications.");
-        // App.jsx inside the fetchNotifications function
-
         const data = await response.json();
         const githubNotifications = data.filter(
           (notif) => notif.type !== "stock"
-        ); // <-- ADD THIS
-        setNotifications(githubNotifications); // <-- MODIFY THIS
+        );
+        setNotifications(githubNotifications);
       } catch (err) {
         setError("Could not connect to the notification service.");
       } finally {
@@ -262,6 +268,7 @@ function App() {
     });
     return () => unsubscribe();
   }, []);
+
   useEffect(() => {
     if (actionStatus) {
       const timer = setTimeout(() => {
@@ -523,7 +530,35 @@ function App() {
       setTrackingOrderId(null);
     }
   };
+  const handleDeleteOrder = async (orderId) => {
+    if (deletingOrderId) return; // Prevent multiple simultaneous deletions
 
+    setDeletingOrderId(orderId);
+    resetActionStates();
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/orders/${orderId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete the order.");
+      }
+
+      // Remove from local state immediately for better UX
+      setOrders((prev) => prev.filter((order) => order.id !== orderId));
+      setActionStatus("Order deleted successfully.");
+    } catch (err) {
+      setError(`Failed to delete order: ${err.message}`);
+    } finally {
+      setDeletingOrderId(null);
+    }
+  };
   const handleSetStockAlert = async () => {
     if (!stockTicker.trim() || !targetPrice.trim()) {
       setError("Please enter a stock ticker and a target price.");
@@ -556,11 +591,8 @@ function App() {
       setIsSettingAlert(false);
     }
   };
-  // App.jsx
 
-  // ADD THIS ENTIRE FUNCTION
   const handleDeleteStockAlert = async (alertId) => {
-    // Prevent accidental clicks while another action is in progress
     if (isLoadingAction) return;
 
     try {
@@ -577,17 +609,100 @@ function App() {
         throw new Error(data.error || "Failed to delete the alert.");
       }
 
-      // The UI will update automatically because of the onSnapshot listener.
-      // We can optionally show a success message.
       setActionStatus("Stock alert removed.");
     } catch (err) {
       setError(err.message);
     }
   };
+  const handleDeleteNotification = async (notificationId) => {
+    setDeletingNotificationId(notificationId);
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/notifications/${notificationId}`,
+        {
+          method: "DELETE",
+        }
+      );
 
-  // --- NEW JSX STRUCTURE with Collapsible Logic ---
+      if (!response.ok) {
+        throw new Error("Failed to delete notification");
+      }
+
+      // Remove from local state immediately for better UX
+      setNotifications((prev) =>
+        prev.filter((notif) => notif.id !== notificationId)
+      );
+      setActionStatus("Notification deleted");
+    } catch (err) {
+      setError(`Failed to delete notification: ${err.message}`);
+    } finally {
+      setDeletingNotificationId(null);
+    }
+  };
+
+  const handleDeleteSnippet = async (snippetId) => {
+    setDeletingSnippetId(snippetId);
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/snippets/${snippetId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete the snippet.");
+      }
+
+      // Remove from local state immediately for better UX
+      setSnippets((prev) => prev.filter((snippet) => snippet.id !== snippetId));
+      setActionStatus("Snippet deleted successfully.");
+    } catch (err) {
+      setError(`Failed to delete snippet: ${err.message}`);
+    } finally {
+      setDeletingSnippetId(null);
+    }
+  };
+  // --- RENDER ---
   return (
-    <div className="container">
+    <div className={`container ${!isAuthenticated ? "unauthenticated" : ""}`}>
+      {/* Authentication Overlay */}
+      {!isAuthenticated && (
+        <div className="auth-overlay">
+          <div className="auth-modal">
+            <div className="auth-modal-icon">
+              <Lock size={48} />
+            </div>
+            <h2 className="auth-modal-title">Welcome to AlturaAI</h2>
+            <p className="auth-modal-subtitle">
+              Please login with Google or GitHub to access your personalized AI
+              assistant
+            </p>
+            <div className="auth-modal-buttons">
+              <button
+                className="btn-auth-modal"
+                onClick={() => handleLoginClick("google")}
+              >
+                <GoogleIcon />
+                <span>Continue with Google</span>
+              </button>
+              {/* <button
+                className="btn-auth-modal"
+                onClick={() => handleLoginClick("github")}
+              >
+                <GithubIcon />
+                <span>Continue with GitHub</span>
+              </button> */}
+            </div>
+            <p className="auth-modal-footer">
+              Secure authentication • Your data stays private
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <header className="app-header">
         <div className="header-left">
@@ -795,18 +910,6 @@ function App() {
                 <span>{isFindingTimes ? "..." : "Meeting Times"}</span>
               </button>
             </div>
-            {/* <button
-              className="btn btn-tertiary full-width"
-              onClick={() => handleAction("summarize_youtube_video", "YouTube")}
-              disabled={isLoadingAction}
-            >
-              <Youtube className="btn-icon" />
-              <span>
-                {isLoadingAction && loadingActionName === "YouTube"
-                  ? "Summarizing..."
-                  : "Summarize YouTube Video"}
-              </span>
-            </button> */}
             {summary && <div className="result-box">{summary}</div>}
             {meetingSlots.length > 0 && (
               <div className="result-box">
@@ -842,12 +945,11 @@ function App() {
                     <p className="empty-state">Loading feed...</p>
                   ) : notifications.length > 0 ? (
                     notifications.map((notif) => (
-                      <div
-                        key={notif.id}
-                        className="list-item interactive"
-                        onClick={() => handleNotificationClick(notif)}
-                      >
-                        <div className="list-item-content-icon">
+                      <div key={notif.id} className="list-item">
+                        <div
+                          className="list-item-content-icon interactive"
+                          onClick={() => handleNotificationClick(notif)}
+                        >
                           <div className="list-icon-wrapper-purple">
                             <Code className="list-icon" />
                           </div>
@@ -861,6 +963,21 @@ function App() {
                             </p>
                           </div>
                         </div>
+                        <button
+                          className="btn-icon-delete"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteNotification(notif.id);
+                          }}
+                          disabled={deletingNotificationId === notif.id}
+                          title="Delete notification"
+                        >
+                          {deletingNotificationId === notif.id ? (
+                            <div className="status-dot animate-pulse" />
+                          ) : (
+                            <Trash2 size={16} />
+                          )}
+                        </button>
                       </div>
                     ))
                   ) : (
@@ -907,6 +1024,21 @@ function App() {
                           {new URL(snippet.url).hostname}
                         </span>
                       </div>
+                      <button
+                        className="btn-icon-delete"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteSnippet(snippet.id);
+                        }}
+                        disabled={deletingSnippetId === snippet.id}
+                        title="Delete snippet"
+                      >
+                        {deletingSnippetId === snippet.id ? (
+                          <div className="status-dot animate-pulse" />
+                        ) : (
+                          <Trash2 size={16} />
+                        )}
+                      </button>
                     </div>
                   ))
                 ) : (
@@ -917,7 +1049,6 @@ function App() {
               </div>
             )}
           </div>
-
           <div className="card">
             <div className="card-title-wrapper">
               <h3 className="card-title">
@@ -944,28 +1075,48 @@ function App() {
                     orders.length > 0 ? (
                       orders.map((order) => (
                         <div key={order.id} className="list-item">
-                          <p className="list-item-title">{order.itemName}</p>
-                          <p className="list-item-meta">
-                            ETA: {order.eta} • Tracking: {order.trackingNumber}
-                          </p>
-                          {order.status && (
+                          <div className="list-item-content">
+                            <p className="list-item-title">{order.itemName}</p>
                             <p className="list-item-meta">
-                              Status: {order.status}
+                              ETA: {order.eta} • Tracking:{" "}
+                              {order.trackingNumber}
                             </p>
-                          )}
-                          {order.trackingNumber &&
-                            order.trackingNumber !== "N/A" &&
-                            !order.aftershipTrackingId && (
-                              <button
-                                className="btn-track"
-                                onClick={() => handleStartTracking(order)}
-                                disabled={trackingOrderId === order.id}
-                              >
-                                {trackingOrderId === order.id
-                                  ? "Starting..."
-                                  : "Start Live Tracking"}
-                              </button>
+                            {order.status && (
+                              <p className="list-item-meta">
+                                Status: {order.status}
+                              </p>
                             )}
+                            <div className="order-actions">
+                              {order.trackingNumber &&
+                                order.trackingNumber !== "N/A" &&
+                                !order.aftershipTrackingId && (
+                                  <button
+                                    className="btn-track"
+                                    onClick={() => handleStartTracking(order)}
+                                    disabled={trackingOrderId === order.id}
+                                  >
+                                    {trackingOrderId === order.id
+                                      ? "Starting..."
+                                      : "Start Live Tracking"}
+                                  </button>
+                                )}
+                              <button
+                                className="btn-icon-delete"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteOrder(order.id);
+                                }}
+                                disabled={deletingOrderId === order.id}
+                                title="Delete order"
+                              >
+                                {deletingOrderId === order.id ? (
+                                  <div className="status-dot animate-pulse" />
+                                ) : (
+                                  <Trash2 size={16} />
+                                )}
+                              </button>
+                            </div>
+                          </div>
                         </div>
                       ))
                     ) : (
@@ -1018,20 +1169,19 @@ function App() {
               <h4 className="list-subtitle">Active Alerts</h4>
               {stockAlerts.length > 0 ? (
                 stockAlerts.map((alert) => (
-                  <div key={alert.id} className={`active-alert-item ...`}>
+                  <div key={alert.id} className="active-alert-item">
                     <span>
                       {alert.ticker} > ${alert.targetPrice}
                     </span>
                     <span>({alert.status})</span>
-                    {/* ADD THIS BUTTON */}
                     <button
                       className="btn-icon-delete"
                       onClick={() => handleDeleteStockAlert(alert.id)}
+                      disabled={isLoadingAction}
                       title="Delete this alert"
                     >
-                      <X size={16} />
+                      <Trash2 size={16} />
                     </button>
-                    {/* END OF ADDED BUTTON */}
                   </div>
                 ))
               ) : (

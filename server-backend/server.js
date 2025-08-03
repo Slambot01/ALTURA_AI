@@ -35,6 +35,7 @@ const notionParentPageId = process.env.NOTION_PARENT_PAGE_ID;
 const app = express();
 const PORT = process.env.PORT || 3001;
 app.use(cors());
+app.use(express.static("public"));
 
 // --- Webhook Route (Requires Raw Body Parser) ---
 app.post(
@@ -126,6 +127,21 @@ app.get("/api/auth/google", (req, res) => {
   res.json({ url });
 });
 
+// app.get("/api/auth/google/callback", async (req, res) => {
+//   const { code } = req.query;
+//   try {
+//     const { tokens } = await googleOauth2Client.getToken(code);
+//     const userRef = db.collection("users").doc("main_user");
+//     await userRef.set({ google_tokens: tokens }, { merge: true });
+//     console.log("Google Auth successful, tokens stored in Firestore.");
+//     res.send(
+//       "<h1>Authentication successful!</h1><p>You can close this tab now.</p>"
+//     );
+//   } catch (error) {
+//     console.error("Error authenticating with Google:", error);
+//     res.status(500).send("Authentication failed.");
+//   }
+// });
 app.get("/api/auth/google/callback", async (req, res) => {
   const { code } = req.query;
   try {
@@ -133,9 +149,7 @@ app.get("/api/auth/google/callback", async (req, res) => {
     const userRef = db.collection("users").doc("main_user");
     await userRef.set({ google_tokens: tokens }, { merge: true });
     console.log("Google Auth successful, tokens stored in Firestore.");
-    res.send(
-      "<h1>Authentication successful!</h1><p>You can close this tab now.</p>"
-    );
+    res.redirect("/auth-success.html?provider=google");
   } catch (error) {
     console.error("Error authenticating with Google:", error);
     res.status(500).send("Authentication failed.");
@@ -147,6 +161,37 @@ app.get("/api/auth/github", (req, res) => {
   res.json({ url });
 });
 
+// app.get("/api/auth/github/callback", async (req, res) => {
+//   const { code } = req.query;
+//   try {
+//     const tokenResponse = await fetch(
+//       "https://github.com/login/oauth/access_token",
+//       {
+//         method: "POST",
+//         headers: {
+//           "Content-Type": "application/json",
+//           Accept: "application/json",
+//         },
+//         body: JSON.stringify({
+//           client_id: process.env.GITHUB_CLIENT_ID,
+//           client_secret: process.env.GITHUB_CLIENT_SECRET,
+//           code: code,
+//         }),
+//       }
+//     );
+//     const tokenData = await tokenResponse.json();
+//     const accessToken = tokenData.access_token;
+//     const userRef = db.collection("users").doc("main_user");
+//     await userRef.set({ github_access_token: accessToken }, { merge: true });
+//     console.log("GitHub Auth successful, token stored in Firestore.");
+//     res.send(
+//       "<h1>GitHub Authentication successful!</h1><p>You can close this tab now.</p>"
+//     );
+//   } catch (error) {
+//     console.error("Error authenticating with GitHub:", error);
+//     res.status(500).send("GitHub Authentication failed.");
+//   }
+// });
 app.get("/api/auth/github/callback", async (req, res) => {
   const { code } = req.query;
   try {
@@ -170,15 +215,12 @@ app.get("/api/auth/github/callback", async (req, res) => {
     const userRef = db.collection("users").doc("main_user");
     await userRef.set({ github_access_token: accessToken }, { merge: true });
     console.log("GitHub Auth successful, token stored in Firestore.");
-    res.send(
-      "<h1>GitHub Authentication successful!</h1><p>You can close this tab now.</p>"
-    );
+    res.redirect("/auth-success.html?provider=github");
   } catch (error) {
     console.error("Error authenticating with GitHub:", error);
     res.status(500).send("GitHub Authentication failed.");
   }
 });
-
 app.get("/api/auth/status", async (req, res) => {
   try {
     const userDoc = await db.collection("users").doc("main_user").get();
@@ -209,6 +251,21 @@ app.get("/api/notifications", async (req, res) => {
   } catch (error) {
     console.error("Error fetching notifications:", error);
     res.status(500).json({ error: "Failed to fetch notifications." });
+  }
+});
+// Delete a specific notification
+app.delete("/api/notifications/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Delete from Firestore
+    await db.collection("notifications").doc(id).delete();
+
+    console.log(`Notification ${id} deleted successfully.`);
+    res.json({ success: true, message: "Notification deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting notification:", error);
+    res.status(500).json({ error: "Failed to delete notification." });
   }
 });
 
@@ -708,6 +765,63 @@ app.post("/api/orders/bulk-update", async (req, res) => {
     res.status(500).json({ error: "Failed to update orders" });
   }
 });
+// --- Delete Order Route ---
+app.delete("/api/orders/:orderId", async (req, res) => {
+  try {
+    const { orderId } = req.params;
+
+    // Check if the order exists first
+    const orderDoc = await db.collection("orders").doc(orderId).get();
+
+    if (!orderDoc.exists) {
+      return res.status(404).json({ error: "Order not found." });
+    }
+
+    const orderData = orderDoc.data();
+
+    // If the order has AfterShip tracking, optionally remove it from AfterShip
+    if (orderData.aftershipTrackingId) {
+      try {
+        const aftershipResponse = await fetch(
+          `https://api.aftership.com/v4/trackings/${orderData.aftershipTrackingId}`,
+          {
+            method: "DELETE",
+            headers: {
+              "as-api-key": process.env.AFTERSHIP_API_KEY,
+            },
+          }
+        );
+
+        if (aftershipResponse.ok) {
+          console.log(`Removed tracking from AfterShip for order ${orderId}`);
+        } else {
+          console.log(
+            `Failed to remove tracking from AfterShip, but continuing with local deletion`
+          );
+        }
+      } catch (aftershipError) {
+        console.error(
+          "Error removing tracking from AfterShip:",
+          aftershipError
+        );
+        // Continue with local deletion even if AfterShip removal fails
+      }
+    }
+
+    // Delete from Firestore
+    await db.collection("orders").doc(orderId).delete();
+
+    console.log(`Order ${orderId} deleted successfully.`);
+    res.json({
+      success: true,
+      message: "Order deleted successfully.",
+      deletedOrderId: orderId,
+    });
+  } catch (error) {
+    console.error("Error deleting order:", error);
+    res.status(500).json({ error: "Failed to delete order." });
+  }
+});
 
 // --- Snippet Saver Route ---
 app.post("/api/snippets/save", async (req, res) => {
@@ -728,6 +842,20 @@ app.post("/api/snippets/save", async (req, res) => {
   } catch (error) {
     console.error("Error saving snippet:", error);
     res.status(500).json({ error: "Failed to save snippet." });
+  }
+});
+app.delete("/api/snippets/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Delete from Firestore
+    await db.collection("snippets").doc(id).delete();
+
+    console.log(`Snippet ${id} deleted successfully.`);
+    res.json({ success: true, message: "Snippet deleted successfully." });
+  } catch (error) {
+    console.error("Error deleting snippet:", error);
+    res.status(500).json({ error: "Failed to delete snippet." });
   }
 });
 
