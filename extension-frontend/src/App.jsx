@@ -291,6 +291,62 @@ function App() {
       setError(`Could not connect to the ${service} login service.`);
     }
   };
+  const formatTimestamp = (timestamp) => {
+    try {
+      let date;
+
+      // Handle Firestore timestamp object
+      if (timestamp && timestamp.seconds) {
+        date = new Date(timestamp.seconds * 1000);
+      }
+      // Handle timestamp in milliseconds
+      else if (timestamp && typeof timestamp === "number") {
+        date = new Date(timestamp);
+      }
+      // Handle ISO string or Date object
+      else if (timestamp) {
+        date = new Date(timestamp);
+      } else {
+        return "Unknown time";
+      }
+
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return "Invalid date";
+      }
+
+      // Format the date and time
+      const now = new Date();
+      const diffMs = now - date;
+      const diffMins = Math.floor(diffMs / 60000);
+      const diffHours = Math.floor(diffMs / 3600000);
+      const diffDays = Math.floor(diffMs / 86400000);
+
+      // Show relative time for recent events
+      if (diffMins < 1) {
+        return "Just now";
+      } else if (diffMins < 60) {
+        return `${diffMins}m ago`;
+      } else if (diffHours < 24) {
+        return `${diffHours}h ago`;
+      } else if (diffDays < 7) {
+        return `${diffDays}d ago`;
+      } else {
+        // Show full date for older events
+        return (
+          date.toLocaleDateString() +
+          " " +
+          date.toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        );
+      }
+    } catch (error) {
+      console.error("Error formatting timestamp:", error);
+      return "Invalid date";
+    }
+  };
 
   const handleAction = (action, actionName) => {
     setIsLoadingAction(true);
@@ -957,9 +1013,9 @@ function App() {
                             <p className="list-item-summary">{notif.message}</p>
                             <p className="list-item-meta">
                               {notif.repo} •{" "}
-                              {new Date(
-                                notif.timestamp.seconds * 1000
-                              ).toLocaleTimeString()}
+                              {formatTimestamp(
+                                notif.timestamp || notif.timestampMs
+                              )}
                             </p>
                           </div>
                         </div>

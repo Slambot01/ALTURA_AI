@@ -38,6 +38,8 @@ app.use(cors());
 app.use(express.static("public"));
 
 // --- Webhook Route (Requires Raw Body Parser) ---
+// In your server.js, update the webhook route to store a plain timestamp
+
 app.post(
   "/api/github/webhook",
   express.raw({ type: "application/json", limit: "5mb" }),
@@ -66,14 +68,15 @@ app.post(
 
       let notification = {
         read: false,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        timestamp: new Date(), // Use plain Date object instead of Firestore timestamp
+        timestampMs: Date.now(), // Also store as milliseconds for easier handling
       };
 
       if (githubEvent === "pull_request") {
         console.log("Processing a 'pull_request' event.");
         const pr = data.pull_request;
         notification.type = "pr";
-        notification.repo = data.repository.full_name; // Added for context
+        notification.repo = data.repository.full_name;
         notification.message = `PR #${data.number} ${data.action}: "${pr.title}"`;
         notification.url = pr.html_url;
         notification.user = pr.user.login;
@@ -82,12 +85,11 @@ app.post(
         const pusher = data.pusher.name;
         const branch = data.ref.split("/").pop();
         notification.type = "push";
-        notification.repo = data.repository.full_name; // Added for context
+        notification.repo = data.repository.full_name;
         notification.message = `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`;
         notification.url = data.compare;
         notification.user = pusher;
       } else {
-        // If the event is not one we handle, just acknowledge it.
         console.log(`Received unhandled event type: ${githubEvent}`);
         return res.status(200).send("Event received but not processed.");
       }
@@ -98,7 +100,6 @@ app.post(
 
       res.status(200).send("Event successfully processed.");
     } catch (error) {
-      // This will now catch any error that happens and log it.
       console.error("--- FATAL WEBHOOK ERROR ---");
       console.error(error);
       console.error("---------------------------");
