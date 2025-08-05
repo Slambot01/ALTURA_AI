@@ -151,10 +151,6 @@ body {
   margin-top: 8px;
 }
 
-.list-item-content {
-  flex: 1;
-}
-
 .btn-icon-delete {
   background: none;
   border: none;
@@ -793,24 +789,39 @@ body {
   background: rgba(16, 185, 129, 0.1);
   border-color: rgba(16, 185, 129, 0.2);
 }
-
+/* 
 .list-item-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 0.5rem;
-}
+} */
 
-.list-item-title {
+/* .list-item-title {
   color: var(--gray-100);
   font-weight: 500;
+  flex: 1;
   font-size: 0.875rem;
   margin: 0;
+  display: flex;
+  flex-direction: row;
+  
+  gap: 100%;
+}   */
+.list-item-title {
+  flex: 1;
+  margin: 0;
+  font-weight: 600;
+  color: #ffffff;
+  display: flex; /* put title and button in same row */
+  align-items: center; /* vertically align them */
+  gap: 14rem;
 }
 
 a.list-item-title {
   text-decoration: none;
   transition: color 0.2s ease;
+  /* color: #2563eb; */
 }
 
 a.list-item-title:hover {
@@ -989,7 +1000,14 @@ a.list-item-title:hover {
   color: var(--gray-200);
   background: rgba(75, 85, 99, 0.3);
 }
+.task-header-actions .btn-icon-delete {
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
 
+.task-header-actions .btn-icon-delete:hover {
+  opacity: 1;
+}
 .btn-icon-delete {
   background: none;
   border: none;
@@ -1046,4 +1064,141 @@ a.list-item-title:hover {
 .success-message {
   background: rgba(22, 163, 74, 0.9);
   border: 1px solid var(--green-500);
+}
+
+/* Content area takes up most of the space */
+.list-item-content {
+  flex: 1;
+  min-width: 0; /* Allows content to shrink */
+}
+
+/* Header within the content area - now contains title and actions */
+.list-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center; /* Changed to flex-start for better alignment */
+  margin-bottom: 8px;
+  width: 100%;
+}
+
+/* Container for actions in the header (status + delete button) */
+.task-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0; /* Prevents shrinking */
+}
+
+/* Status indicator area */
+.list-item-status {
+  margin-left: 8px;
+}
+
+/* Delete button positioned on the right */
+.btn-icon-delete {
+  background: none;
+  border: none;
+  color: #6b7280;
+  cursor: pointer;
+  padding: 6px; /* Slightly smaller padding for inline use */
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  flex-shrink: 0; /* Prevents the button from shrinking */
+  height: fit-content;
+}
+
+.btn-icon-delete:hover:not(:disabled) {
+  background-color: #fee2e2;
+  color: #dc2626;
+}
+
+.btn-icon-delete:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Task actions container - for when you need vertical stacking */
+.task-actions {
+  display: flex;
+  flex-direction: column; /* Stacks icons vertically */
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px; /* Space between content and buttons */
+}
+
+/* Download button styling */
+.btn-download {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  border-radius: 6px;
+  background-color: #10b981; /* A nice green color */
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-download:hover:not(:disabled) {
+  background-color: #059669; /* Darker green on hover */
+  transform: translateY(-1px);
+}
+
+.btn-download:disabled {
+  background-color: #6b7280; /* Gray when disabled */
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-download .status-dot {
+  background-color: white;
+}
+
+.btn-download svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Ensure the research task item has proper spacing */
+.research-task-item {
+  position: relative;
+}
+
+.research-task-item .list-item-content {
+  width: 100%;
+}
+
+/* Status dot styling */
+.status-dot-yellow {
+  width: 8px;
+  height: 8px;
+  background-color: #f59e0b;
+  border-radius: 50%;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  background-color: #6b7280;
+  border-radius: 50%;
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }

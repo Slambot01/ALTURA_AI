@@ -29,6 +29,7 @@ import {
   ChevronDown,
   Lock,
   Trash2,
+  Download,
 } from "lucide-react";
 
 import "./App.css";
@@ -85,7 +86,51 @@ const GithubIcon = () => (
     />
   </svg>
 );
+const renderMarkdown = (text) => {
+  if (!text) return "";
 
+  return (
+    text
+      // Headers
+      .replace(
+        /^### (.*$)/gm,
+        '<h3 style="margin: 16px 0 8px 0; font-weight: 600; color: #2c3e50;">$1</h3>'
+      )
+      .replace(
+        /^## (.*$)/gm,
+        '<h2 style="margin: 20px 0 12px 0; font-weight: 600; color: #2c3e50; font-size: 1.25rem;">$1</h2>'
+      )
+      .replace(
+        /^# (.*$)/gm,
+        '<h1 style="margin: 24px 0 16px 0; font-weight: 600; color: #2c3e50; font-size: 1.5rem;">$1</h1>'
+      )
+
+      // Bold text
+      .replace(
+        /\*\*(.*?)\*\*/g,
+        '<strong style="font-weight: 600; color: #2c3e50;">$1</strong>'
+      )
+
+      // Italic text
+      .replace(/\*(.*?)\*/g, "<em>$1</em>")
+
+      // Line breaks and paragraphs
+      .replace(/\n\n/g, '</p><p style="margin: 12px 0; line-height: 1.6;">')
+      .replace(/\n/g, "<br>")
+
+      // Wrap in paragraph tags
+      .replace(
+        /^(?!<[h|p])(.)/gm,
+        '<p style="margin: 12px 0; line-height: 1.6;">$1'
+      )
+      .replace(/(?<!>)(.)$/gm, "$1</p>")
+
+      // Clean up
+      .replace(/<p[^>]*><\/p>/g, "")
+      .replace(/<p[^>]*>(<[h1-6])/g, "$1")
+      .replace(/(<\/[h1-6]>)<\/p>/g, "$1")
+  );
+};
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -123,6 +168,8 @@ function App() {
   const [deletingNotificationId, setDeletingNotificationId] = useState(null);
   const [deletingSnippetId, setDeletingSnippetId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
+  const [downloadingTaskId, setDownloadingTaskId] = useState(null);
+
   // --- UI Visibility State ---
   const [expandedTasks, setExpandedTasks] = useState({});
   const [isGithubFeedVisible, setIsGithubFeedVisible] = useState(false);
@@ -293,25 +340,16 @@ function App() {
   };
   const formatTimestamp = (timestamp) => {
     try {
-      let date;
-
-      // Handle Firestore timestamp object
-      if (timestamp && timestamp.seconds) {
-        date = new Date(timestamp.seconds * 1000);
-      }
-      // Handle timestamp in milliseconds
-      else if (timestamp && typeof timestamp === "number") {
-        date = new Date(timestamp);
-      }
-      // Handle ISO string or Date object
-      else if (timestamp) {
-        date = new Date(timestamp);
-      } else {
+      if (!timestamp) {
         return "Unknown time";
       }
 
+      // Create date object from ISO string or other formats
+      const date = new Date(timestamp);
+
       // Check if date is valid
       if (isNaN(date.getTime())) {
+        console.error("Invalid timestamp:", timestamp);
         return "Invalid date";
       }
 
@@ -343,11 +381,15 @@ function App() {
         );
       }
     } catch (error) {
-      console.error("Error formatting timestamp:", error);
+      console.error(
+        "Error formatting timestamp:",
+        error,
+        "Raw timestamp:",
+        timestamp
+      );
       return "Invalid date";
     }
   };
-
   const handleAction = (action, actionName) => {
     setIsLoadingAction(true);
     setLoadingActionName(actionName);
@@ -535,6 +577,71 @@ function App() {
       setError(err.message);
     } finally {
       setIsResearching(false);
+    }
+  };
+  const handleDownloadResearchPDF = async (taskId, taskTopic) => {
+    if (downloadingTaskId) return; // Prevent multiple simultaneous downloads
+
+    setDownloadingTaskId(taskId);
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/research/task/${taskId}/download`
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to download PDF");
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const filename = `research-${taskTopic
+        .replace(/[^a-zA-Z0-9]/g, "-")
+        .toLowerCase()}-${taskId}.pdf`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      setActionStatus("PDF downloaded successfully!");
+    } catch (error) {
+      setError(`Failed to download PDF: ${error.message}`);
+    } finally {
+      setDownloadingTaskId(null);
+    }
+  };
+  const [deletingTaskId, setDeletingTaskId] = useState(null);
+
+  const handleDeleteResearchTask = async (taskId) => {
+    if (deletingTaskId) return; // Prevent multiple simultaneous deletions
+
+    setDeletingTaskId(taskId);
+    resetActionStates();
+
+    try {
+      const response = await fetch(
+        `http://localhost:3001/api/research/task/${taskId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to delete the research task.");
+      }
+
+      // Remove from local state immediately for better UX
+      setResearchTasks((prev) => prev.filter((task) => task.id !== taskId));
+      setActionStatus("Research task deleted successfully.");
+    } catch (err) {
+      setError(`Failed to delete research task: ${err.message}`);
+    } finally {
+      setDeletingTaskId(null);
     }
   };
 
@@ -877,37 +984,65 @@ function App() {
                     const isExpanded = !!expandedTasks[task.id];
                     const isLongText = task.result && task.result.length > 150;
                     return (
-                      <div key={task.id} className="list-item">
-                        <div className="list-item-header">
-                          <h5 className="list-item-title">{task.topic}</h5>
-                          {task.status === "completed" ? (
-                            <CheckCircle className="icon-status-success" />
-                          ) : task.status === "in-progress" ? (
-                            <div className="status-dot-yellow animate-pulse" />
-                          ) : null}
-                        </div>
-                        {task.status === "completed" && (
-                          <>
-                            <p className="list-item-summary">
-                              {isLongText && !isExpanded
-                                ? `${task.result.substring(0, 150)}...`
-                                : task.result}
-                            </p>
-                            {isLongText && (
+                      <div
+                        key={task.id}
+                        className="list-item research-task-item"
+                      >
+                        <div className="list-item-content">
+                          <div className="list-item-header">
+                            <h5 className="list-item-title">{task.topic}</h5>
+                            <div className="task-header-actions">
+                              {/* Only show in-progress status, remove completed status */}
+                              {task.status === "in-progress" && (
+                                <div className="status-dot-yellow animate-pulse" />
+                              )}
+                              {/* Delete button moved to header */}
                               <button
-                                className="btn-show-more"
-                                onClick={() => toggleTaskExpansion(task.id)}
+                                className="btn-icon-delete"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteResearchTask(task.id);
+                                }}
+                                disabled={deletingTaskId === task.id}
+                                title="Delete research task"
                               >
-                                {isExpanded ? "Show less" : "Show more"}
+                                {deletingTaskId === task.id ? (
+                                  <div className="status-dot animate-pulse" />
+                                ) : (
+                                  <Trash2 size={16} />
+                                )}
                               </button>
-                            )}
-                          </>
-                        )}
-                        {task.status === "failed" && (
-                          <p className="list-item-summary text-red">
-                            {task.error}
-                          </p>
-                        )}
+                            </div>
+                          </div>
+                          {task.status === "completed" && (
+                            <>
+                              <div
+                                className="list-item-summary"
+                                dangerouslySetInnerHTML={{
+                                  __html:
+                                    isLongText && !isExpanded
+                                      ? renderMarkdown(
+                                          task.result.substring(0, 150)
+                                        ) + "..."
+                                      : renderMarkdown(task.result),
+                                }}
+                              />
+                              {isLongText && (
+                                <button
+                                  className="btn-show-more"
+                                  onClick={() => toggleTaskExpansion(task.id)}
+                                >
+                                  {isExpanded ? "Show less" : "Show more"}
+                                </button>
+                              )}
+                            </>
+                          )}
+                          {task.status === "failed" && (
+                            <p className="list-item-summary text-red">
+                              {task.error}
+                            </p>
+                          )}
+                        </div>
                       </div>
                     );
                   })
@@ -1012,10 +1147,7 @@ function App() {
                           <div>
                             <p className="list-item-summary">{notif.message}</p>
                             <p className="list-item-meta">
-                              {notif.repo} •{" "}
-                              {formatTimestamp(
-                                notif.timestamp || notif.timestampMs
-                              )}
+                              {notif.repo} • {formatTimestamp(notif.timestamp)}
                             </p>
                           </div>
                         </div>
@@ -1132,30 +1264,22 @@ function App() {
                       orders.map((order) => (
                         <div key={order.id} className="list-item">
                           <div className="list-item-content">
-                            <p className="list-item-title">{order.itemName}</p>
-                            <p className="list-item-meta">
-                              ETA: {order.eta} • Tracking:{" "}
-                              {order.trackingNumber}
-                            </p>
-                            {order.status && (
-                              <p className="list-item-meta">
-                                Status: {order.status}
-                              </p>
-                            )}
-                            <div className="order-actions">
-                              {order.trackingNumber &&
-                                order.trackingNumber !== "N/A" &&
-                                !order.aftershipTrackingId && (
-                                  <button
-                                    className="btn-track"
-                                    onClick={() => handleStartTracking(order)}
-                                    disabled={trackingOrderId === order.id}
-                                  >
-                                    {trackingOrderId === order.id
-                                      ? "Starting..."
-                                      : "Start Live Tracking"}
-                                  </button>
+                            <div className="list-item-header">
+                              <div>
+                                <p className="list-item-title">
+                                  {order.itemName}
+                                </p>
+                                <p className="list-item-meta">
+                                  ETA: {order.eta} • Tracking:{" "}
+                                  {order.trackingNumber}
+                                </p>
+                                {order.status && (
+                                  <p className="list-item-meta">
+                                    Status: {order.status}
+                                  </p>
                                 )}
+                              </div>
+                              {/* Delete button moved to header - top right */}
                               <button
                                 className="btn-icon-delete"
                                 onClick={(e) => {
@@ -1171,6 +1295,21 @@ function App() {
                                   <Trash2 size={16} />
                                 )}
                               </button>
+                            </div>
+                            <div className="order-actions">
+                              {order.trackingNumber &&
+                                order.trackingNumber !== "N/A" &&
+                                !order.aftershipTrackingId && (
+                                  <button
+                                    className="btn-track"
+                                    onClick={() => handleStartTracking(order)}
+                                    disabled={trackingOrderId === order.id}
+                                  >
+                                    {trackingOrderId === order.id
+                                      ? "Starting..."
+                                      : "Start Live Tracking"}
+                                  </button>
+                                )}
                             </div>
                           </div>
                         </div>
@@ -1207,7 +1346,7 @@ function App() {
               />
               <input
                 type="number"
-                placeholder="Target Price"
+                placeholder="Target Price in USD"
                 className="input-field"
                 value={targetPrice}
                 onChange={(e) => setTargetPrice(e.target.value)}
@@ -1272,20 +1411,44 @@ function App() {
                           </div>
                           <div>
                             <p className="list-item-title">
-                              📈 {alert.ticker} reached target of $
+                              {alert.ticker} reached target of $
                               {alert.targetPrice}!
+                              <button
+                                className="btn-icon-delete"
+                                onClick={() => handleDeleteStockAlert(alert.id)}
+                                disabled={isLoadingAction}
+                                title="Delete this alert"
+                              >
+                                <Trash2 size={16} />
+                              </button>
                             </p>
                             <p className="list-item-summary-green">
                               Current price: $
-                              {alert.currentPrice || "Fetching..."}
+                              {alert.currentPrice
+                                ? alert.currentPrice.toFixed(2)
+                                : "Updating..."}
                             </p>
                             <p className="list-item-meta">
-                              {new Date(
-                                alert.createdAt.seconds * 1000
-                              ).toLocaleString()}
+                              {alert.triggeredAt
+                                ? new Date(
+                                    alert.triggeredAt.seconds * 1000
+                                  ).toLocaleString()
+                                : alert.createdAt
+                                ? new Date(
+                                    alert.createdAt.seconds * 1000
+                                  ).toLocaleString()
+                                : "Recently"}
                             </p>
                           </div>
                         </div>
+                        {/* <button
+                          className="btn-icon-delete"
+                          onClick={() => handleDeleteStockAlert(alert.id)}
+                          disabled={isLoadingAction}
+                          title="Delete this alert"
+                        >
+                          <Trash2 size={16} />
+                        </button> */}
                       </div>
                     ))
                 ) : (

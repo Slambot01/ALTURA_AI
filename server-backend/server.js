@@ -9,6 +9,7 @@ const { Client } = require("@notionhq/client");
 const cron = require("node-cron");
 const crypto = require("crypto");
 const { YoutubeTranscript } = require("youtube-transcript");
+const PDFDocument = require("pdfkit");
 require("dotenv").config();
 
 // --- Firebase Admin SDK Initialization ---
@@ -244,10 +245,37 @@ app.get("/api/notifications", async (req, res) => {
       .orderBy("timestamp", "desc")
       .limit(20)
       .get();
-    const notifications = notificationsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+
+    const notifications = notificationsSnapshot.docs.map((doc) => {
+      const data = doc.data();
+
+      // Convert Firestore timestamp to JavaScript Date
+      let formattedTimestamp = null;
+      if (data.timestamp) {
+        if (data.timestamp.toDate) {
+          // It's a Firestore timestamp object
+          formattedTimestamp = data.timestamp.toDate().toISOString();
+        } else if (data.timestamp.seconds) {
+          // It's a serialized Firestore timestamp
+          formattedTimestamp = new Date(
+            data.timestamp.seconds * 1000
+          ).toISOString();
+        } else {
+          // It's already a regular date
+          formattedTimestamp = new Date(data.timestamp).toISOString();
+        }
+      } else {
+        // Fallback to current time if no timestamp
+        formattedTimestamp = new Date().toISOString();
+      }
+
+      return {
+        id: doc.id,
+        ...data,
+        timestamp: formattedTimestamp, // Send as ISO string
+      };
+    });
+
     res.json(notifications);
   } catch (error) {
     console.error("Error fetching notifications:", error);
@@ -901,6 +929,62 @@ app.delete("/api/stocks/alert/:alertId", async (req, res) => {
     res.status(500).json({ error: "Failed to delete stock alert." });
   }
 });
+//  this for manual stock price updates:
+
+app.post("/api/stocks/refresh-prices", async (req, res) => {
+  try {
+    const alertsSnapshot = await db
+      .collection("stock_alerts")
+      .where("status", "==", "triggered")
+      .get();
+
+    if (alertsSnapshot.empty) {
+      return res.json({
+        success: true,
+        message: "No triggered alerts to refresh.",
+        updated: 0,
+      });
+    }
+
+    let updatedCount = 0;
+    const batch = db.batch();
+
+    for (const doc of alertsSnapshot.docs) {
+      const alert = doc.data();
+      try {
+        const response = await fetch(
+          `https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${process.env.FINNHUB_API_KEY}`
+        );
+        const data = await response.json();
+        const currentPrice = data.c;
+
+        if (currentPrice && currentPrice !== alert.currentPrice) {
+          batch.update(doc.ref, {
+            currentPrice: currentPrice,
+            lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          updatedCount++;
+          console.log(`Updated ${alert.ticker} price to $${currentPrice}`);
+        }
+      } catch (error) {
+        console.error(`Failed to update price for ${alert.ticker}:`, error);
+      }
+    }
+
+    if (updatedCount > 0) {
+      await batch.commit();
+    }
+
+    res.json({
+      success: true,
+      message: `Updated ${updatedCount} stock prices.`,
+      updated: updatedCount,
+    });
+  } catch (error) {
+    console.error("Error refreshing stock prices:", error);
+    res.status(500).json({ error: "Failed to refresh stock prices." });
+  }
+});
 // END OF NEW BLOCK
 // --- AI Content Composer Route ---
 app.post("/api/ai/compose", async (req, res) => {
@@ -1146,6 +1230,183 @@ app.post("/api/research/start", async (req, res) => {
   }
 });
 
+app.delete("/api/research/task/:taskId", async (req, res) => {
+  try {
+    const { taskId } = req.params;
+
+    // Check if the research task exists first
+    const taskDoc = await db.collection("research_tasks").doc(taskId).get();
+
+    if (!taskDoc.exists) {
+      return res.status(404).json({ error: "Research task not found." });
+    }
+
+    // Delete from Firestore
+    await db.collection("research_tasks").doc(taskId).delete();
+
+    console.log(`Research task ${taskId} deleted successfully.`);
+    res.json({
+      success: true,
+      message: "Research task deleted successfully.",
+      deletedTaskId: taskId,
+    });
+  } catch (error) {
+    console.error("Error deleting research task:", error);
+    res.status(500).json({ error: "Failed to delete research task." });
+  }
+});
+app.get("/api/research/task/:taskId/download", async (req, res) => {
+  try {
+    const { taskId } = req.params;
+
+    // Fetch the research task from Firestore
+    const taskDoc = await db.collection("research_tasks").doc(taskId).get();
+
+    if (!taskDoc.exists) {
+      return res.status(404).json({ error: "Research task not found." });
+    }
+
+    const taskData = taskDoc.data();
+
+    if (taskData.status !== "completed" || !taskData.result) {
+      return res
+        .status(400)
+        .json({ error: "Research task is not completed or has no content." });
+    }
+
+    // Create a new PDF document
+    const doc = new PDFDocument({
+      margin: 50,
+      size: "A4",
+    });
+
+    // Set response headers for PDF download
+    const filename = `research-${taskData.topic
+      .replace(/[^a-zA-Z0-9]/g, "-")
+      .toLowerCase()}-${taskId}.pdf`;
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    // Handle errors
+    doc.on("error", (err) => {
+      console.error("PDF document error:", err);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to generate PDF." });
+      }
+    });
+
+    // Pipe the PDF to the response
+    doc.pipe(res);
+
+    // Add title
+    doc
+      .fontSize(20)
+      .font("Helvetica-Bold")
+      .text("Research Report", { align: "center" })
+      .moveDown();
+
+    // Add topic
+    doc
+      .fontSize(16)
+      .font("Helvetica-Bold")
+      .text("Topic:", { continued: true })
+      .font("Helvetica")
+      .text(` ${taskData.topic}`)
+      .moveDown();
+
+    // Add creation date
+    const createdDate = taskData.createdAt?.toDate
+      ? taskData.createdAt.toDate().toLocaleDateString()
+      : new Date().toLocaleDateString();
+
+    doc
+      .fontSize(12)
+      .font("Helvetica-Bold")
+      .text("Created:", { continued: true })
+      .font("Helvetica")
+      .text(` ${createdDate}`)
+      .moveDown();
+
+    // Add completion date if available
+    if (taskData.completedAt) {
+      const completedDate = taskData.completedAt?.toDate
+        ? taskData.completedAt.toDate().toLocaleDateString()
+        : new Date().toLocaleDateString();
+
+      doc
+        .font("Helvetica-Bold")
+        .text("Completed:", { continued: true })
+        .font("Helvetica")
+        .text(` ${completedDate}`)
+        .moveDown();
+    }
+
+    // Add separator line
+    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke().moveDown();
+
+    // Process the content and remove markdown formatting for PDF
+    let content = taskData.result;
+
+    // Simple markdown to plain text conversion
+    content = content
+      .replace(/#{1,6}\s+/g, "") // Remove header markers
+      .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold markers
+      .replace(/\*(.*?)\*/g, "$1") // Remove italic markers
+      .replace(/`(.*?)`/g, "$1") // Remove code markers
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // Convert links to just text
+      .replace(/^\s*[-*+]\s+/gm, "• ") // Convert list markers to bullets
+      .replace(/^\s*\d+\.\s+/gm, "• "); // Convert numbered lists to bullets
+
+    // Split content into paragraphs
+    const paragraphs = content.split(/\n\s*\n/);
+
+    // Add content with proper formatting
+    doc.fontSize(11).font("Helvetica");
+
+    for (const paragraph of paragraphs) {
+      if (paragraph.trim()) {
+        // Check if we need a new page
+        if (doc.y > 700) {
+          doc.addPage();
+        }
+
+        doc
+          .text(paragraph.trim(), {
+            align: "justify",
+            lineGap: 2,
+          })
+          .moveDown();
+      }
+    }
+
+    // Add footer to each page after content is complete
+    const range = doc.bufferedPageRange();
+    const pageCount = range.count;
+
+    // Only add footers if there are pages
+    if (pageCount > 0) {
+      for (let i = 1; i <= pageCount; i++) {
+        doc.switchToPage(i - 1); // PDFKit uses 0-based indexing internally
+        doc
+          .fontSize(9)
+          .font("Helvetica")
+          .text(`Generated by AlturaAI - Page ${i} of ${pageCount}`, 50, 750, {
+            align: "center",
+          });
+      }
+    }
+
+    // Finalize the PDF and end the stream
+    doc.end();
+
+    console.log(`PDF generated for research task: ${taskId}`);
+  } catch (error) {
+    console.error("Error generating PDF:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to generate PDF." });
+    }
+  }
+});
 // --- Background Task for Stock Monitoring ---
 cron.schedule("*/5 * * * *", async () => {
   console.log("--- Running Stock Price Check ---");
@@ -1181,11 +1442,15 @@ cron.schedule("*/5 * * * *", async () => {
               read: false,
             });
 
-            await db
-              .collection("stock_alerts")
-              .doc(doc.id)
-              .update({ status: "triggered" });
-            console.log(`!!! Stock alert triggered for ${alert.ticker} !!!`);
+            // UPDATE: Save the current price when triggering the alert
+            await db.collection("stock_alerts").doc(doc.id).update({
+              status: "triggered",
+              currentPrice: currentPrice, // Add this line
+              triggeredAt: admin.firestore.FieldValue.serverTimestamp(), // Optional: add timestamp
+            });
+            console.log(
+              `!!! Stock alert triggered for ${alert.ticker} at $${currentPrice} !!!`
+            );
           }
         }
       } catch (error) {
