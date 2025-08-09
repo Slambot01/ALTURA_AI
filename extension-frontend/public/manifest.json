@@ -9,7 +9,8 @@
     "scripting",
     "alarms",
     "contextMenus",
-    "sidePanel"
+    "sidePanel",
+    "debugger"
   ],
   "host_permissions": ["<all_urls>"],
   "action": {
@@ -22,7 +23,8 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "run_at": "document_end"
     }
   ],
   "side_panel": {

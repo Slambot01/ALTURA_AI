@@ -30,6 +30,8 @@ import {
   Lock,
   Trash2,
   Download,
+  Sparkles,
+  Zap,
 } from "lucide-react";
 
 import "./App.css";
@@ -169,7 +171,13 @@ function App() {
   const [deletingSnippetId, setDeletingSnippetId] = useState(null);
   const [deletingOrderId, setDeletingOrderId] = useState(null);
   const [downloadingTaskId, setDownloadingTaskId] = useState(null);
+  const [isNotionConnected, setIsNotionConnected] = useState(false);
+  const [followUpQuery, setFollowUpQuery] = useState("");
+  const [currentUrl, setCurrentUrl] = useState("");
+  // const [isProactiveOn, setIsProactiveOn] = useState(false);
+  // const [proactiveAnalysis, setProactiveAnalysis] = useState(null);
 
+  // const [isLoadingProactive, setIsLoadingProactive] = useState(false);
   // --- UI Visibility State ---
   const [expandedTasks, setExpandedTasks] = useState({});
   const [isGithubFeedVisible, setIsGithubFeedVisible] = useState(false);
@@ -177,6 +185,7 @@ function App() {
   const [isOrdersVisible, setIsOrdersVisible] = useState(false);
   const [isResearchTasksVisible, setIsResearchTasksVisible] = useState(false);
   const [isStockAlertsVisible, setIsStockAlertsVisible] = useState(false);
+  const [isGithubAppInstalled, setIsGithubAppInstalled] = useState(false);
 
   const isExtension =
     typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id;
@@ -199,33 +208,58 @@ function App() {
   };
 
   // --- ALL EFFECTS (UNCHANGED) ---
+  // In App.jsx, replace your entire first useEffect with this one
+
   useEffect(() => {
     if (isExtension) {
       chrome.runtime.sendMessage({ action: "check_auth_status" });
+
+      // This block now correctly gets all three statuses when the app loads
       chrome.storage.local.get(
-        ["isGoogleLoggedIn", "isGithubLoggedIn"],
+        [
+          "isGoogleLoggedIn",
+          "isNotionConnected",
+          "isGithubAppInstalled",
+          // "isProactiveAssistantOn",
+        ],
         (result) => {
+          console.log("=== FRONTEND AUTH STATUS ===");
+          console.log("Google logged in:", !!result.isGoogleLoggedIn);
+          console.log("Notion connected:", !!result.isNotionConnected);
+          console.log("GitHub app installed:", !!result.isGithubAppInstalled);
+
           setIsGoogleLoggedIn(!!result.isGoogleLoggedIn);
-          setIsGithubLoggedIn(!!result.isGithubLoggedIn);
+          setIsNotionConnected(!!result.isNotionConnected); // Fixed
+          setIsGithubAppInstalled(!!result.isGithubAppInstalled); // Fixed
+          // setIsProactiveOn(!!result.isProactiveAssistantOn);
         }
       );
+
+      // This block now correctly listens for changes to all three statuses
       const handleStorageChange = (changes, area) => {
         if (area === "local") {
           if (changes.isGoogleLoggedIn) {
             setIsGoogleLoggedIn(!!changes.isGoogleLoggedIn.newValue);
           }
-          if (changes.isGithubLoggedIn) {
-            setIsGithubLoggedIn(!!changes.isGithubLoggedIn.newValue);
+          if (changes.isNotionConnected) {
+            // Added this block
+            setIsNotionConnected(!!changes.isNotionConnected.newValue);
           }
+          if (changes.isGithubAppInstalled) {
+            setIsGithubAppInstalled(!!changes.isGithubAppInstalled.newValue);
+          }
+          // if (changes.isProactiveAssistantOn) {
+          //   setIsProactiveOn(!!changes.isProactiveAssistantOn.newValue);
+          // }
         }
       };
+
       chrome.storage.onChanged.addListener(handleStorageChange);
       return () => chrome.storage.onChanged.removeListener(handleStorageChange);
     }
   }, [isExtension]);
-
   useEffect(() => {
-    if (!isGithubLoggedIn) {
+    if (!isGithubAppInstalled) {
       setLoading(false);
       setNotifications([]);
       return;
@@ -249,8 +283,16 @@ function App() {
     fetchNotifications();
     const intervalId = setInterval(fetchNotifications, 30000);
     return () => clearInterval(intervalId);
-  }, [isGithubLoggedIn]);
-
+  }, [isGithubAppInstalled]);
+  useEffect(() => {
+    if (isExtension) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          setCurrentUrl(tabs[0].url);
+        }
+      });
+    }
+  }, [isExtension]);
   useEffect(() => {
     const q = query(
       collection(db, "research_tasks"),
@@ -325,7 +367,6 @@ function App() {
     }
   }, [actionStatus]);
 
-  // --- ALL ACTION HANDLERS (UNCHANGED) ---
   const handleLoginClick = async (service) => {
     try {
       const response = await fetch(`http://localhost:3001/api/auth/${service}`);
@@ -435,7 +476,12 @@ function App() {
       }
     );
   };
-
+  // const handleToggleProactive = (e) => {
+  //   const isChecked = e.target.checked;
+  //   setIsProactiveOn(isChecked);
+  //   // Save the setting so the background script can read it
+  //   chrome.storage.local.set({ isProactiveAssistantOn: isChecked });
+  // };
   const handleReviewPR = async (prUrl) => {
     setIsReviewModalOpen(true);
     setIsReviewLoading(true);
@@ -722,6 +768,34 @@ function App() {
       setDeletingOrderId(null);
     }
   };
+  const handleConnectNotion = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/auth/notion");
+      const data = await response.json();
+      if (data.url) {
+        chrome.tabs.create({ url: data.url });
+      }
+    } catch (e) {
+      setError("Could not connect to the Notion service.");
+    }
+  };
+  const handleInstallGitHubApp = async () => {
+    try {
+      const response = await fetch("http://localhost:3001/api/github/install");
+      const data = await response.json();
+      if (data.url) {
+        chrome.tabs.create({ url: data.url });
+
+        // After opening the tab, wait 5 seconds then force a status check
+        setTimeout(() => {
+          console.log("Re-checking auth status after installation attempt...");
+          chrome.runtime.sendMessage({ action: "check_auth_status" });
+        }, 5000); // 5 seconds
+      }
+    } catch (e) {
+      setError("Could not connect to the GitHub App service.");
+    }
+  };
   const handleSetStockAlert = async () => {
     if (!stockTicker.trim() || !targetPrice.trim()) {
       setError("Please enter a stock ticker and a target price.");
@@ -802,7 +876,34 @@ function App() {
       setDeletingNotificationId(null);
     }
   };
+  const handleDebugFollowUp = async () => {
+    if (!followUpQuery.trim()) return;
 
+    setIsLoadingAction(true); // Reuse existing loading state
+    const currentAnalysis = summary; // Get the current analysis text
+
+    try {
+      const response = await fetch("http://localhost:3001/api/debug/followup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          previousAnalysis: currentAnalysis,
+          newQuery: followUpQuery,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error);
+
+      // Append the new question and answer to the summary for a conversational feel
+      const updatedSummary = `${currentAnalysis}\n\n---\n\n**My Follow-up:** ${followUpQuery}\n\n**AlturaAI:**\n${data.summary}`;
+      setSummary(updatedSummary);
+      setFollowUpQuery(""); // Clear the input
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsLoadingAction(false);
+    }
+  };
   const handleDeleteSnippet = async (snippetId) => {
     setDeletingSnippetId(snippetId);
     try {
@@ -840,8 +941,7 @@ function App() {
             </div>
             <h2 className="auth-modal-title">Welcome to AlturaAI</h2>
             <p className="auth-modal-subtitle">
-              Please login with Google or GitHub to access your personalized AI
-              assistant
+              Please login with Google to access your personalized AI assistant
             </p>
             <div className="auth-modal-buttons">
               <button
@@ -851,13 +951,6 @@ function App() {
                 <GoogleIcon />
                 <span>Continue with Google</span>
               </button>
-              {/* <button
-                className="btn-auth-modal"
-                onClick={() => handleLoginClick("github")}
-              >
-                <GithubIcon />
-                <span>Continue with GitHub</span>
-              </button> */}
             </div>
             <p className="auth-modal-footer">
               Secure authentication • Your data stays private
@@ -888,25 +981,22 @@ function App() {
                 <span>Login</span>
               </button>
             )}
-            {isGithubLoggedIn ? (
+            {isGithubAppInstalled ? (
               <div className="status-indicator-green">
                 <div className="status-dot animate-pulse"></div>
                 <GithubIcon />
-                <span>Github</span>
+                <span>App Installed</span>
               </div>
             ) : (
-              <button
-                className="btn-login"
-                onClick={() => handleLoginClick("github")}
-              >
+              <button className="btn-login" onClick={handleInstallGitHubApp}>
                 <GithubIcon />
-                <span>Login</span>
+                <span>Install App</span>
               </button>
             )}
           </div>
         </div>
         <div className="header-right">
-          {(isGoogleLoggedIn || isGithubLoggedIn) && (
+          {(isGoogleLoggedIn || isGithubAppInstalled) && (
             <LogOut
               className="icon-btn"
               onClick={handleLogout}
@@ -916,251 +1006,365 @@ function App() {
         </div>
       </header>
 
-      {/* Main Grid */}
+      {/* Main Grid with Corrected Conditional Logic */}
       <div className="main-grid">
-        {/* Left Column */}
-        <div className="grid-column">
-          <div className="card">
-            <h3 className="card-title">
-              <Bot className="title-icon" />
-              AI Content Composer
-            </h3>
-            <div className="card-content">
-              <textarea
-                placeholder="Write a LinkedIn post about this..."
-                className="input-textarea"
-                value={composeRequest}
-                onChange={(e) => setComposeRequest(e.target.value)}
-                disabled={isComposing}
-              />
-              <button
-                className="btn btn-primary"
-                onClick={handleCompose}
-                disabled={isComposing}
-              >
-                {isComposing ? "Generating..." : "Generate"}
-              </button>
-              {composedText && <pre className="result-box">{composedText}</pre>}
-            </div>
-          </div>
+        {/* // VIEW 2: If no analysis is ready, show the normal dashboard */}
+        <div>
+          <div className="grid-column">
+            {/* --- Left Column Cards --- */}
 
-          <div className="card">
-            <div className="card-title-wrapper">
+            {/* <div className="card">
+                <h3 className="card-title">
+                  <Sparkles className="title-icon" />
+                  Proactive Assistant
+                </h3>
+                <div
+                  className="card-content"
+                  style={{
+                    flexDirection: "row",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                  }}
+                >
+                  <span>Analyze products automatically</span>
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      checked={isProactiveOn}
+                      onChange={handleToggleProactive}
+                    />
+                    <span className="slider round"></span>
+                  </label>
+                </div>
+              </div> */}
+            <div className="card">
               <h3 className="card-title">
-                <Search className="title-icon text-green" /> Asynchronous
-                Research
+                <Bot className="title-icon" />
+                AI Content Composer
               </h3>
-              <button
-                className="card-title-toggle"
-                onClick={() => setIsResearchTasksVisible((p) => !p)}
-              >
-                {isResearchTasksVisible ? <ChevronUp /> : <ChevronDown />}
-              </button>
-            </div>
-            <div className="card-content">
-              <input
-                type="text"
-                placeholder="Enter a topic to research..."
-                className="input-field"
-                value={researchTopic}
-                onChange={(e) => setResearchTopic(e.target.value)}
-                disabled={isResearching}
-              />
-              <button
-                className="btn btn-secondary"
-                onClick={handleStartResearch}
-                disabled={isResearching}
-              >
-                {isResearching ? "Starting..." : "Start Research"}
-              </button>
-            </div>
-            {isResearchTasksVisible && (
-              <div className="task-list">
-                <h4 className="list-subtitle">
-                  <FileText className="subtitle-icon" /> Research Tasks
-                </h4>
-                {researchTasks.length > 0 ? (
-                  researchTasks.map((task) => {
-                    const isExpanded = !!expandedTasks[task.id];
-                    const isLongText = task.result && task.result.length > 150;
-                    return (
-                      <div
-                        key={task.id}
-                        className="list-item research-task-item"
-                      >
-                        <div className="list-item-content">
-                          <div className="list-item-header">
-                            <h5 className="list-item-title">{task.topic}</h5>
-                            <div className="task-header-actions">
-                              {/* Only show in-progress status, remove completed status */}
-                              {task.status === "in-progress" && (
-                                <div className="status-dot-yellow animate-pulse" />
-                              )}
-                              {/* Delete button moved to header */}
-                              <button
-                                className="btn-icon-delete"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteResearchTask(task.id);
-                                }}
-                                disabled={deletingTaskId === task.id}
-                                title="Delete research task"
-                              >
-                                {deletingTaskId === task.id ? (
-                                  <div className="status-dot animate-pulse" />
-                                ) : (
-                                  <Trash2 size={16} />
-                                )}
-                              </button>
-                            </div>
-                          </div>
-                          {task.status === "completed" && (
-                            <>
-                              <div
-                                className="list-item-summary"
-                                dangerouslySetInnerHTML={{
-                                  __html:
-                                    isLongText && !isExpanded
-                                      ? renderMarkdown(
-                                          task.result.substring(0, 150)
-                                        ) + "..."
-                                      : renderMarkdown(task.result),
-                                }}
-                              />
-                              {isLongText && (
-                                <button
-                                  className="btn-show-more"
-                                  onClick={() => toggleTaskExpansion(task.id)}
-                                >
-                                  {isExpanded ? "Show less" : "Show more"}
-                                </button>
-                              )}
-                            </>
-                          )}
-                          {task.status === "failed" && (
-                            <p className="list-item-summary text-red">
-                              {task.error}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="empty-state">No research tasks initiated.</p>
+              <div className="card-content">
+                <textarea
+                  placeholder="Write a LinkedIn post about this..."
+                  className="input-textarea"
+                  value={composeRequest}
+                  onChange={(e) => setComposeRequest(e.target.value)}
+                  disabled={isComposing}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleCompose}
+                  disabled={isComposing}
+                >
+                  {isComposing ? "Generating..." : "Generate"}
+                </button>
+                {composedText && (
+                  <pre className="result-box">{composedText}</pre>
                 )}
               </div>
-            )}
-          </div>
-
-          <div className="card">
-            <h3 className="card-title">Quick Actions</h3>
-            <div className="quick-actions-grid">
-              <button
-                className="btn btn-tertiary"
-                onClick={() => handleAction("summarize_page", "Summarize")}
-                disabled={isLoadingAction}
-              >
-                <FileText className="btn-icon" />
-                <span>
-                  {isLoadingAction && loadingActionName === "Summarize"
-                    ? "..."
-                    : "Summarize Page"}
-                </span>
-              </button>
-              <button
-                className="btn btn-tertiary"
-                onClick={() => handleAction("draft_email", "Draft")}
-                disabled={!isGoogleLoggedIn || isLoadingAction}
-              >
-                <Mail className="btn-icon" />
-                <span>
-                  {isLoadingAction && loadingActionName === "Draft"
-                    ? "..."
-                    : "Draft Email"}
-                </span>
-              </button>
-              <button
-                className="btn btn-tertiary"
-                onClick={() => handleAction("create_notion_doc", "Notion")}
-                disabled={isLoadingAction}
-              >
-                <BookOpen className="btn-icon" />
-                <span>
-                  {isLoadingAction && loadingActionName === "Notion"
-                    ? "..."
-                    : "Notion Doc"}
-                </span>
-              </button>
-              <button
-                className="btn btn-tertiary"
-                onClick={handleFindMeetingTimes}
-                disabled={!isGoogleLoggedIn || isFindingTimes}
-              >
-                <Calendar className="btn-icon" />
-                <span>{isFindingTimes ? "..." : "Meeting Times"}</span>
-              </button>
             </div>
-            {summary && <div className="result-box">{summary}</div>}
-            {meetingSlots.length > 0 && (
-              <div className="result-box">
-                <strong>Available Times:</strong>
-                <ul>
-                  {meetingSlots.map((slot, i) => (
-                    <li key={i}>{slot.toLocaleString()}</li>
-                  ))}
-                </ul>
+            <div className="card">
+              <div className="card-title-wrapper">
+                <h3 className="card-title">
+                  <Search className="title-icon text-green" /> Asynchronous
+                  Research
+                </h3>
+                <button
+                  className="card-title-toggle"
+                  onClick={() => setIsResearchTasksVisible((p) => !p)}
+                >
+                  {isResearchTasksVisible ? <ChevronUp /> : <ChevronDown />}
+                </button>
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* Middle Column */}
-        <div className="grid-column">
-          <div className="card">
-            <div className="card-title-wrapper">
-              <h3 className="card-title">
-                <GitBranch className="title-icon text-purple" /> GitHub Feed
-              </h3>
-              <button
-                className="card-title-toggle"
-                onClick={() => setIsGithubFeedVisible((p) => !p)}
-              >
-                {isGithubFeedVisible ? <ChevronUp /> : <ChevronDown />}
-              </button>
-            </div>
-            {isGithubFeedVisible && (
               <div className="card-content">
-                {isGithubLoggedIn ? (
-                  loading ? (
-                    <p className="empty-state">Loading feed...</p>
-                  ) : notifications.length > 0 ? (
-                    notifications.map((notif) => (
-                      <div key={notif.id} className="list-item">
+                <input
+                  type="text"
+                  placeholder="Enter a topic to research..."
+                  className="input-field"
+                  value={researchTopic}
+                  onChange={(e) => setResearchTopic(e.target.value)}
+                  disabled={isResearching}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleStartResearch}
+                  disabled={isResearching}
+                >
+                  {isResearching ? "Starting..." : "Start Research"}
+                </button>
+              </div>
+              {isResearchTasksVisible && (
+                <div className="task-list">
+                  <h4 className="list-subtitle">
+                    <FileText className="subtitle-icon" /> Research Tasks
+                  </h4>
+                  {researchTasks.length > 0 ? (
+                    researchTasks.map((task) => {
+                      const isExpanded = !!expandedTasks[task.id];
+                      const isLongText =
+                        task.result && task.result.length > 150;
+                      return (
                         <div
-                          className="list-item-content-icon interactive"
-                          onClick={() => handleNotificationClick(notif)}
+                          key={task.id}
+                          className="list-item research-task-item"
                         >
-                          <div className="list-icon-wrapper-purple">
-                            <Code className="list-icon" />
+                          <div className="list-item-content">
+                            <div className="list-item-header">
+                              <h5 className="list-item-title">{task.topic}</h5>
+                              <div className="task-header-actions">
+                                {/* Only show in-progress status, remove completed status */}
+                                {task.status === "in-progress" && (
+                                  <div className="status-dot-yellow animate-pulse" />
+                                )}
+                                {/* Delete button moved to header */}
+                                <button
+                                  className="btn-icon-delete"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteResearchTask(task.id);
+                                  }}
+                                  disabled={deletingTaskId === task.id}
+                                  title="Delete research task"
+                                >
+                                  {deletingTaskId === task.id ? (
+                                    <div className="status-dot animate-pulse" />
+                                  ) : (
+                                    <Trash2 size={16} />
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                            {task.status === "completed" && (
+                              <>
+                                <div
+                                  className="list-item-summary"
+                                  dangerouslySetInnerHTML={{
+                                    __html:
+                                      isLongText && !isExpanded
+                                        ? renderMarkdown(
+                                            task.result.substring(0, 150)
+                                          ) + "..."
+                                        : renderMarkdown(task.result),
+                                  }}
+                                />
+                                {isLongText && (
+                                  <button
+                                    className="btn-show-more"
+                                    onClick={() => toggleTaskExpansion(task.id)}
+                                  >
+                                    {isExpanded ? "Show less" : "Show more"}
+                                  </button>
+                                )}
+                              </>
+                            )}
+                            {task.status === "failed" && (
+                              <p className="list-item-summary text-red">
+                                {task.error}
+                              </p>
+                            )}
                           </div>
-                          <div>
-                            <p className="list-item-summary">{notif.message}</p>
-                            <p className="list-item-meta">
-                              {notif.repo} • {formatTimestamp(notif.timestamp)}
-                            </p>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="empty-state">No research tasks initiated.</p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="card">
+              <h3 className="card-title">Quick Actions</h3>
+              <div className="quick-actions-grid">
+                <button
+                  className="btn btn-tertiary"
+                  onClick={() => handleAction("debug_page", "Debug")}
+                  disabled={isLoadingAction}
+                >
+                  <Code className="btn-icon" />
+                  <span>
+                    {isLoadingAction && loadingActionName === "Debug"
+                      ? "Debugging..."
+                      : "Debug Page"}
+                  </span>
+                </button>
+                <button
+                  className="btn btn-tertiary"
+                  onClick={() => handleAction("summarize_page", "Summarize")}
+                  disabled={isLoadingAction}
+                >
+                  <FileText className="btn-icon" />
+                  <span>
+                    {isLoadingAction && loadingActionName === "Summarize"
+                      ? "..."
+                      : "Summarize Page"}
+                  </span>
+                </button>
+                <button
+                  className="btn btn-tertiary"
+                  onClick={() => handleAction("draft_email", "Draft")}
+                  disabled={!isGoogleLoggedIn || isLoadingAction}
+                >
+                  <Mail className="btn-icon" />
+                  <span>
+                    {isLoadingAction && loadingActionName === "Draft"
+                      ? "..."
+                      : "Draft Email"}
+                  </span>
+                </button>
+                <button
+                  className="btn btn-tertiary"
+                  onClick={() => handleAction("create_notion_doc", "Notion")}
+                  disabled={isLoadingAction}
+                >
+                  <BookOpen className="btn-icon" />
+                  <span>
+                    {isLoadingAction && loadingActionName === "Notion"
+                      ? "..."
+                      : "Notion Doc"}
+                  </span>
+                </button>
+              </div>
+              {summary && (
+                <>
+                  <div
+                    className="result-box"
+                    dangerouslySetInnerHTML={{
+                      __html: renderMarkdown(summary),
+                    }}
+                  />
+                  <div
+                    className="follow-up-container"
+                    style={{ marginTop: "1rem" }}
+                  >
+                    <textarea
+                      placeholder="Ask a follow-up question..."
+                      className="input-textarea"
+                      value={followUpQuery}
+                      onChange={(e) => setFollowUpQuery(e.target.value)}
+                      disabled={isLoadingAction}
+                    />
+                    <button
+                      className="btn btn-secondary"
+                      onClick={handleDebugFollowUp}
+                      disabled={isLoadingAction}
+                      style={{ marginTop: "0.5rem" }}
+                    >
+                      {isLoadingAction ? "Thinking..." : "Send Follow-up"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="grid-column">
+            {/* --- Middle Column Cards --- */}
+            <div className="card">
+              <div className="card-title-wrapper">
+                <h3 className="card-title">
+                  <GitBranch className="title-icon text-purple" /> GitHub Feed
+                </h3>
+                <button
+                  className="card-title-toggle"
+                  onClick={() => setIsGithubFeedVisible((p) => !p)}
+                >
+                  {isGithubFeedVisible ? <ChevronUp /> : <ChevronDown />}
+                </button>
+              </div>
+              {isGithubFeedVisible && (
+                <div className="card-content">
+                  {isGithubAppInstalled ? (
+                    loading ? (
+                      <p className="empty-state">Loading feed...</p>
+                    ) : notifications.length > 0 ? (
+                      notifications.map((notif) => (
+                        <div key={notif.id} className="list-item">
+                          <div
+                            className="list-item-content-icon interactive"
+                            onClick={() => handleNotificationClick(notif)}
+                          >
+                            <div className="list-icon-wrapper-purple">
+                              <Code className="list-icon" />
+                            </div>
+                            <div>
+                              <p className="list-item-summary">
+                                {notif.message}
+                              </p>
+                              <p className="list-item-meta">
+                                {notif.repo} •{" "}
+                                {formatTimestamp(notif.timestamp)}
+                              </p>
+                            </div>
                           </div>
+                          <button
+                            className="btn-icon-delete"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteNotification(notif.id);
+                            }}
+                            disabled={deletingNotificationId === notif.id}
+                            title="Delete notification"
+                          >
+                            {deletingNotificationId === notif.id ? (
+                              <div className="status-dot animate-pulse" />
+                            ) : (
+                              <Trash2 size={16} />
+                            )}
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="empty-state">
+                        No notifications. Push a commit or open a PR.
+                      </p>
+                    )
+                  ) : (
+                    <p className="empty-state">
+                      Install the GitHub App to see your feed.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="card">
+              <div className="card-title-wrapper">
+                <h3 className="card-title">
+                  <Code className="title-icon text-cyan" /> My Snippets
+                </h3>
+                <button
+                  className="card-title-toggle"
+                  onClick={() => setIsSnippetsVisible((p) => !p)}
+                >
+                  {isSnippetsVisible ? <ChevronUp /> : <ChevronDown />}
+                </button>
+              </div>
+              {isSnippetsVisible && (
+                <div className="card-content">
+                  {snippets.length > 0 ? (
+                    snippets.map((snippet) => (
+                      <div key={snippet.id} className="list-item">
+                        <div className="list-item-header">
+                          <a
+                            href={snippet.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="list-item-title"
+                          >
+                            {snippet.text}
+                          </a>
+                          <span className="tag-cyan">
+                            {new URL(snippet.url).hostname}
+                          </span>
                         </div>
                         <button
                           className="btn-icon-delete"
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDeleteNotification(notif.id);
+                            handleDeleteSnippet(snippet.id);
                           }}
-                          disabled={deletingNotificationId === notif.id}
-                          title="Delete notification"
+                          disabled={deletingSnippetId === snippet.id}
+                          title="Delete snippet"
                         >
-                          {deletingNotificationId === notif.id ? (
+                          {deletingSnippetId === snippet.id ? (
                             <div className="status-dot animate-pulse" />
                           ) : (
                             <Trash2 size={16} />
@@ -1170,221 +1374,161 @@ function App() {
                     ))
                   ) : (
                     <p className="empty-state">
-                      No notifications. Push a commit or open a PR.
-                    </p>
-                  )
-                ) : (
-                  <p className="empty-state">
-                    Login with GitHub to see your feed.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-title-wrapper">
-              <h3 className="card-title">
-                <Code className="title-icon text-cyan" /> My Snippets
-              </h3>
-              <button
-                className="card-title-toggle"
-                onClick={() => setIsSnippetsVisible((p) => !p)}
-              >
-                {isSnippetsVisible ? <ChevronUp /> : <ChevronDown />}
-              </button>
-            </div>
-            {isSnippetsVisible && (
-              <div className="card-content">
-                {snippets.length > 0 ? (
-                  snippets.map((snippet) => (
-                    <div key={snippet.id} className="list-item">
-                      <div className="list-item-header">
-                        <a
-                          href={snippet.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="list-item-title"
-                        >
-                          {snippet.text}
-                        </a>
-                        <span className="tag-cyan">
-                          {new URL(snippet.url).hostname}
-                        </span>
-                      </div>
-                      <button
-                        className="btn-icon-delete"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteSnippet(snippet.id);
-                        }}
-                        disabled={deletingSnippetId === snippet.id}
-                        title="Delete snippet"
-                      >
-                        {deletingSnippetId === snippet.id ? (
-                          <div className="status-dot animate-pulse" />
-                        ) : (
-                          <Trash2 size={16} />
-                        )}
-                      </button>
-                    </div>
-                  ))
-                ) : (
-                  <p className="empty-state">
-                    No snippets saved. Highlight text and right-click to save.
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-          <div className="card">
-            <div className="card-title-wrapper">
-              <h3 className="card-title">
-                <Package className="title-icon" /> Recent Orders
-              </h3>
-              <button
-                className="card-title-toggle"
-                onClick={() => setIsOrdersVisible((p) => !p)}
-              >
-                {isOrdersVisible ? <ChevronUp /> : <ChevronDown />}
-              </button>
-            </div>
-            {isOrdersVisible && (
-              <div className="card-content">
-                <button
-                  className="btn btn-secondary full-width"
-                  onClick={handleScanOrders}
-                  disabled={!isGoogleLoggedIn || isScanning}
-                >
-                  {isScanning ? "Scanning Gmail..." : "Scan for New Orders"}
-                </button>
-                <div className="task-list">
-                  {isGoogleLoggedIn ? (
-                    orders.length > 0 ? (
-                      orders.map((order) => (
-                        <div key={order.id} className="list-item">
-                          <div className="list-item-content">
-                            <div className="list-item-header">
-                              <div>
-                                <p className="list-item-title">
-                                  {order.itemName}
-                                </p>
-                                <p className="list-item-meta">
-                                  ETA: {order.eta} • Tracking:{" "}
-                                  {order.trackingNumber}
-                                </p>
-                                {order.status && (
-                                  <p className="list-item-meta">
-                                    Status: {order.status}
-                                  </p>
-                                )}
-                              </div>
-                              {/* Delete button moved to header - top right */}
-                              <button
-                                className="btn-icon-delete"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteOrder(order.id);
-                                }}
-                                disabled={deletingOrderId === order.id}
-                                title="Delete order"
-                              >
-                                {deletingOrderId === order.id ? (
-                                  <div className="status-dot animate-pulse" />
-                                ) : (
-                                  <Trash2 size={16} />
-                                )}
-                              </button>
-                            </div>
-                            <div className="order-actions">
-                              {order.trackingNumber &&
-                                order.trackingNumber !== "N/A" &&
-                                !order.aftershipTrackingId && (
-                                  <button
-                                    className="btn-track"
-                                    onClick={() => handleStartTracking(order)}
-                                    disabled={trackingOrderId === order.id}
-                                  >
-                                    {trackingOrderId === order.id
-                                      ? "Starting..."
-                                      : "Start Live Tracking"}
-                                  </button>
-                                )}
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="empty-state">No orders found yet.</p>
-                    )
-                  ) : (
-                    <p className="empty-state">
-                      Login with Google to track your orders.
+                      No snippets saved. Highlight text and right-click to save.
                     </p>
                   )}
                 </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="grid-column">
-          <div className="card">
-            <h3 className="card-title">
-              <TrendingUp className="title-icon text-green" /> Stock Price
-              Monitor
-            </h3>
-            <div className="card-content">
-              <input
-                type="text"
-                placeholder="e.g. GOOGL"
-                className="input-field"
-                value={stockTicker}
-                onChange={(e) => setStockTicker(e.target.value.toUpperCase())}
-                disabled={isSettingAlert}
-              />
-              <input
-                type="number"
-                placeholder="Target Price in USD"
-                className="input-field"
-                value={targetPrice}
-                onChange={(e) => setTargetPrice(e.target.value)}
-                disabled={isSettingAlert}
-              />
-              <button
-                className="btn btn-secondary"
-                onClick={handleSetStockAlert}
-                disabled={isSettingAlert}
-              >
-                {isSettingAlert ? "Setting..." : "Set Alert"}
-              </button>
+              )}
             </div>
-            <div className="task-list">
-              <h4 className="list-subtitle">Active Alerts</h4>
-              {stockAlerts.length > 0 ? (
-                stockAlerts.map((alert) => (
-                  <div key={alert.id} className="active-alert-item">
-                    <span>
-                      {alert.ticker} > ${alert.targetPrice}
-                    </span>
-                    <span>({alert.status})</span>
-                    <button
-                      className="btn-icon-delete"
-                      onClick={() => handleDeleteStockAlert(alert.id)}
-                      disabled={isLoadingAction}
-                      title="Delete this alert"
-                    >
-                      <Trash2 size={16} />
-                    </button>
+            <div className="card">
+              <div className="card-title-wrapper">
+                <h3 className="card-title">
+                  <Package className="title-icon" /> Recent Orders
+                </h3>
+                <button
+                  className="card-title-toggle"
+                  onClick={() => setIsOrdersVisible((p) => !p)}
+                >
+                  {isOrdersVisible ? <ChevronUp /> : <ChevronDown />}
+                </button>
+              </div>
+              {isOrdersVisible && (
+                <div className="card-content">
+                  <button
+                    className="btn btn-secondary full-width"
+                    onClick={handleScanOrders}
+                    disabled={!isGoogleLoggedIn || isScanning}
+                  >
+                    {isScanning ? "Scanning Gmail..." : "Scan for New Orders"}
+                  </button>
+                  <div className="task-list">
+                    {isGoogleLoggedIn ? (
+                      orders.length > 0 ? (
+                        orders.map((order) => (
+                          <div key={order.id} className="list-item">
+                            <div className="list-item-content">
+                              <div className="list-item-header">
+                                <div>
+                                  <p className="list-item-title">
+                                    {order.itemName}
+                                  </p>
+                                  <p className="list-item-meta">
+                                    ETA: {order.eta} • Tracking:{" "}
+                                    {order.trackingNumber}
+                                  </p>
+                                  {order.status && (
+                                    <p className="list-item-meta">
+                                      Status: {order.status}
+                                    </p>
+                                  )}
+                                </div>
+                                {/* Delete button moved to header - top right */}
+                                <button
+                                  className="btn-icon-delete"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteOrder(order.id);
+                                  }}
+                                  disabled={deletingOrderId === order.id}
+                                  title="Delete order"
+                                >
+                                  {deletingOrderId === order.id ? (
+                                    <div className="status-dot animate-pulse" />
+                                  ) : (
+                                    <Trash2 size={16} />
+                                  )}
+                                </button>
+                              </div>
+                              <div className="order-actions">
+                                {order.trackingNumber &&
+                                  order.trackingNumber !== "N/A" &&
+                                  !order.aftershipTrackingId && (
+                                    <button
+                                      className="btn-track"
+                                      onClick={() => handleStartTracking(order)}
+                                      disabled={trackingOrderId === order.id}
+                                    >
+                                      {trackingOrderId === order.id
+                                        ? "Starting..."
+                                        : "Start Live Tracking"}
+                                    </button>
+                                  )}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="empty-state">No orders found yet.</p>
+                      )
+                    ) : (
+                      <p className="empty-state">
+                        Login with Google to track your orders.
+                      </p>
+                    )}
                   </div>
-                ))
-              ) : (
-                <p className="empty-state">No active stock alerts.</p>
+                </div>
               )}
             </div>
           </div>
 
+          <div className="grid-column">
+            {/* --- Right Column Cards --- */}
+
+            <div className="card">
+              <h3 className="card-title">
+                <TrendingUp className="title-icon text-green" /> Stock Price
+                Monitor
+              </h3>
+              <div className="card-content">
+                <input
+                  type="text"
+                  placeholder="e.g. GOOGL"
+                  className="input-field"
+                  value={stockTicker}
+                  onChange={(e) => setStockTicker(e.target.value.toUpperCase())}
+                  disabled={isSettingAlert}
+                />
+                <input
+                  type="number"
+                  placeholder="Target Price in USD"
+                  className="input-field"
+                  value={targetPrice}
+                  onChange={(e) => setTargetPrice(e.target.value)}
+                  disabled={isSettingAlert}
+                />
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleSetStockAlert}
+                  disabled={isSettingAlert}
+                >
+                  {isSettingAlert ? "Setting..." : "Set Alert"}
+                </button>
+              </div>
+              <div className="task-list">
+                <h4 className="list-subtitle">Active Alerts</h4>
+                {stockAlerts.length > 0 ? (
+                  stockAlerts.map((alert) => (
+                    <div key={alert.id} className="active-alert-item">
+                      <span>
+                        {alert.ticker} > ${alert.targetPrice}
+                      </span>
+                      <span>({alert.status})</span>
+                      <button
+                        className="btn-icon-delete"
+                        onClick={() => handleDeleteStockAlert(alert.id)}
+                        disabled={isLoadingAction}
+                        title="Delete this alert"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  ))
+                ) : (
+                  <p className="empty-state">No active stock alerts.</p>
+                )}
+              </div>
+            </div>
+          </div>
           <div className="card">
             <div className="card-title-wrapper">
               <h3 className="card-title">
@@ -1460,13 +1604,11 @@ function App() {
         </div>
       </div>
 
-      {/* Global Messages */}
+      {/* Global Messages and Modals */}
       {error && <div className="global-message error-message">{error}</div>}
       {actionStatus && (
         <div className="global-message success-message">{actionStatus}</div>
       )}
-
-      {/* PR Review Modal */}
       {isReviewModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">

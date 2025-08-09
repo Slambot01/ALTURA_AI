@@ -10,6 +10,8 @@ const cron = require("node-cron");
 const crypto = require("crypto");
 const { YoutubeTranscript } = require("youtube-transcript");
 const PDFDocument = require("pdfkit");
+const jwt = require("jsonwebtoken");
+const fs = require("fs");
 require("dotenv").config();
 
 // --- Firebase Admin SDK Initialization ---
@@ -37,67 +39,139 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.static("public"));
+// Helper function to create a JWT for app authentication
+function generateJwt() {
+  const privateKey = fs.readFileSync(process.env.GITHUB_APP_PRIVATE_KEY_PATH);
+  const payload = {
+    iat: Math.floor(Date.now() / 1000) - 60, // Issued at time (60 seconds in the past)
+    exp: Math.floor(Date.now() / 1000) + 10 * 60, // Expiration time (10 minutes from now)
+    iss: process.env.GITHUB_APP_ID, // Issuer: your App ID
+  };
+  return jwt.sign(payload, privateKey, { algorithm: "RS256" });
+}
 
 // --- Webhook Route (Requires Raw Body Parser) ---
 // In your server.js, update the webhook route to store a plain timestamp
 
+// app.post(
+//   "/api/github/webhook",
+//   express.raw({ type: "application/json", limit: "5mb" }),
+//   async (req, res) => {
+//     console.log("Webhook event received. Validating signature...");
+
+//     try {
+//       const signature = crypto
+//         .createHmac("sha256", process.env.GITHUB_APP_WEBHOOK_SECRET)
+//         .update(req.body)
+//         .digest("hex");
+//       const trusted = Buffer.from(`sha256=${signature}`, "ascii");
+//       const untrusted = Buffer.from(
+//         req.headers["x-hub-signature-256"] || "",
+//         "ascii"
+//       );
+
+//       if (!crypto.timingSafeEqual(trusted, untrusted)) {
+//         console.error("Webhook validation failed! Secrets do not match.");
+//         return res.status(401).send("Invalid signature");
+//       }
+
+//       console.log("Signature validated. Processing event...");
+//       const githubEvent = req.headers["x-github-event"];
+//       const data = JSON.parse(req.body);
+//       const installationId = data.installation.id;
+
+//       let notification = {
+//         read: false,
+//         timestamp: new Date(), // Use plain Date object instead of Firestore timestamp
+//         timestampMs: Date.now(), // Also store as milliseconds for easier handling
+//       };
+
+//       if (githubEvent === "pull_request") {
+//         console.log("Processing a 'pull_request' event.");
+//         const pr = data.pull_request;
+//         notification.type = "pr";
+//         notification.repo = data.repository.full_name;
+//         notification.message = `PR #${data.number} ${data.action}: "${pr.title}"`;
+//         notification.url = pr.html_url;
+//         notification.user = pr.user.login;
+//         console.log("Attempting to save notification to Firestore...");
+//         await db.collection("notifications").add(notification);
+//         console.log("✅ Successfully saved notification to Firestore.");
+//       } else if (githubEvent === "push") {
+//         console.log("Processing a 'push' event.");
+//         const pusher = data.pusher.name;
+//         const branch = data.ref.split("/").pop();
+//         notification.type = "push";
+//         notification.repo = data.repository.full_name;
+//         notification.message = `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`;
+//         notification.url = data.compare;
+//         notification.user = pusher;
+//         console.log("Attempting to save notification to Firestore...");
+//         await db.collection("notifications").add(notification);
+//         console.log("✅ Successfully saved notification to Firestore.");
+//       } else if (
+//         githubEvent === "installation" ||
+//         githubEvent === "installation_repositories"
+//       ) {
+//         console.log(`Processing an '${githubEvent}' event.`);
+//         // This event confirms the app was successfully installed or modified.
+//         // We don't need to save a notification, we just need to acknowledge it.
+//         return res.status(200).send("Installation event acknowledged.");
+//       } else {
+//         console.log(`Received unhandled event type: ${githubEvent}`);
+//         return res.status(200).send("Event received but not processed.");
+//       }
+
+//       console.log("Attempting to save notification to Firestore...");
+//       await db.collection("notifications").add(notification);
+//       console.log("✅ Successfully saved notification to Firestore.");
+//       console.log(`Received webhook for installation ID: ${installationId}`);
+//       res.status(200).send("Event successfully processed.");
+//     }
 app.post(
   "/api/github/webhook",
   express.raw({ type: "application/json", limit: "5mb" }),
   async (req, res) => {
-    console.log("Webhook event received. Validating signature...");
-
     try {
-      const signature = crypto
-        .createHmac("sha256", process.env.GITHUB_WEBHOOK_SECRET)
-        .update(req.body)
-        .digest("hex");
-      const trusted = Buffer.from(`sha256=${signature}`, "ascii");
-      const untrusted = Buffer.from(
-        req.headers["x-hub-signature-256"] || "",
-        "ascii"
-      );
-
-      if (!crypto.timingSafeEqual(trusted, untrusted)) {
-        console.error("Webhook validation failed! Secrets do not match.");
-        return res.status(401).send("Invalid signature");
-      }
-
-      console.log("Signature validated. Processing event...");
+      // ... (signature validation is fine) ...
       const githubEvent = req.headers["x-github-event"];
       const data = JSON.parse(req.body);
-
-      let notification = {
-        read: false,
-        timestamp: new Date(), // Use plain Date object instead of Firestore timestamp
-        timestampMs: Date.now(), // Also store as milliseconds for easier handling
-      };
+      let notification = null; // Initialize notification as null
 
       if (githubEvent === "pull_request") {
-        console.log("Processing a 'pull_request' event.");
         const pr = data.pull_request;
-        notification.type = "pr";
-        notification.repo = data.repository.full_name;
-        notification.message = `PR #${data.number} ${data.action}: "${pr.title}"`;
-        notification.url = pr.html_url;
-        notification.user = pr.user.login;
+        notification = {
+          type: "pr",
+          repo: data.repository.full_name,
+          message: `PR #${data.number} ${data.action}: "${pr.title}"`,
+          url: pr.html_url,
+          user: pr.user.login,
+          read: false,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(), // Use server timestamp
+        };
       } else if (githubEvent === "push") {
-        console.log("Processing a 'push' event.");
         const pusher = data.pusher.name;
         const branch = data.ref.split("/").pop();
-        notification.type = "push";
-        notification.repo = data.repository.full_name;
-        notification.message = `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`;
-        notification.url = data.compare;
-        notification.user = pusher;
+        notification = {
+          type: "push",
+          repo: data.repository.full_name,
+          message: `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`,
+          url: data.compare,
+          user: pusher,
+          read: false,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(), // Use server timestamp
+        };
       } else {
-        console.log(`Received unhandled event type: ${githubEvent}`);
-        return res.status(200).send("Event received but not processed.");
+        console.log(`Received unhandled or ignored event type: ${githubEvent}`);
+        return res.status(200).send("Event acknowledged but not processed.");
       }
 
-      console.log("Attempting to save notification to Firestore...");
-      await db.collection("notifications").add(notification);
-      console.log("✅ Successfully saved notification to Firestore.");
+      // Only save if a notification object was created
+      if (notification) {
+        console.log("Attempting to save notification to Firestore...");
+        await db.collection("notifications").add(notification);
+        console.log("✅ Successfully saved notification to Firestore.");
+      }
 
       res.status(200).send("Event successfully processed.");
     } catch (error) {
@@ -128,6 +202,92 @@ app.get("/api/auth/google", (req, res) => {
   });
   res.json({ url });
 });
+//  Route to start the app installation flow
+app.get("/api/github/install", (req, res) => {
+  const installUrl = `https://github.com/apps/alturaai-copilot/installations/new`;
+  res.json({ url: installUrl });
+});
+
+// NEW: Callback that GitHub hits after a user installs the app
+app.get("/api/github/app/callback", async (req, res) => {
+  const { installation_id, setup_action } = req.query;
+
+  console.log("=== GITHUB CALLBACK ===");
+  console.log("Installation ID:", installation_id);
+  console.log("Setup Action:", setup_action);
+  console.log("Full query params:", req.query);
+
+  try {
+    if (installation_id) {
+      const userRef = db.collection("users").doc("main_user");
+      await userRef.set(
+        {
+          github_installation_id: installation_id,
+          installation_setup_action: setup_action,
+          installation_date: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      console.log(`✅ GitHub App installed with ID: ${installation_id}`);
+
+      // Test the installation immediately
+      await testInstallation(installation_id);
+
+      res.redirect("/auth-success.html?provider=github-app");
+    } else {
+      console.log("❌ No installation_id received");
+      res.status(400).send("No installation ID received");
+    }
+  } catch (error) {
+    console.error("GitHub callback error:", error);
+    res.status(500).send("Installation failed");
+  }
+});
+async function testInstallation(installationId) {
+  try {
+    const appJwt = generateJwt();
+    const tokenResponse = await fetch(
+      `https://api.github.com/app/installations/${installationId}/access_tokens`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${appJwt}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      }
+    );
+
+    if (tokenResponse.ok) {
+      const tokenData = await tokenResponse.json();
+      console.log("✅ Installation token generated successfully");
+
+      // Get installation details
+      const installResponse = await fetch(
+        `https://api.github.com/app/installations/${installationId}`,
+        {
+          headers: {
+            Authorization: `Bearer ${appJwt}`,
+            Accept: "application/vnd.github.v3+json",
+          },
+        }
+      );
+
+      if (installResponse.ok) {
+        const installData = await installResponse.json();
+        console.log("Installation details:", {
+          account: installData.account.login,
+          repositories: installData.repository_selection,
+          permissions: installData.permissions,
+        });
+      }
+    } else {
+      console.log("❌ Failed to generate installation token");
+    }
+  } catch (error) {
+    console.error("Installation test failed:", error);
+  }
+}
 
 // app.get("/api/auth/google/callback", async (req, res) => {
 //   const { code } = req.query;
@@ -162,38 +322,6 @@ app.get("/api/auth/github", (req, res) => {
   const url = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=repo`;
   res.json({ url });
 });
-
-// app.get("/api/auth/github/callback", async (req, res) => {
-//   const { code } = req.query;
-//   try {
-//     const tokenResponse = await fetch(
-//       "https://github.com/login/oauth/access_token",
-//       {
-//         method: "POST",
-//         headers: {
-//           "Content-Type": "application/json",
-//           Accept: "application/json",
-//         },
-//         body: JSON.stringify({
-//           client_id: process.env.GITHUB_CLIENT_ID,
-//           client_secret: process.env.GITHUB_CLIENT_SECRET,
-//           code: code,
-//         }),
-//       }
-//     );
-//     const tokenData = await tokenResponse.json();
-//     const accessToken = tokenData.access_token;
-//     const userRef = db.collection("users").doc("main_user");
-//     await userRef.set({ github_access_token: accessToken }, { merge: true });
-//     console.log("GitHub Auth successful, token stored in Firestore.");
-//     res.send(
-//       "<h1>GitHub Authentication successful!</h1><p>You can close this tab now.</p>"
-//     );
-//   } catch (error) {
-//     console.error("Error authenticating with GitHub:", error);
-//     res.status(500).send("GitHub Authentication failed.");
-//   }
-// });
 app.get("/api/auth/github/callback", async (req, res) => {
   const { code } = req.query;
   try {
@@ -230,13 +358,68 @@ app.get("/api/auth/status", async (req, res) => {
     res.json({
       isGoogleLoggedIn: !!(data && data.google_tokens),
       isGithubLoggedIn: !!(data && data.github_access_token),
+      isNotionConnected: !!data.notion_credentials,
+      isGithubAppInstalled: !!data.github_installation_id,
     });
   } catch (error) {
     console.error("Error checking auth status:", error);
     res.status(500).json({ error: "Failed to check auth status." });
   }
 });
+// --- Notion OAuth Routes ---
 
+// 1. Route to start the Notion connection process
+app.get("/api/auth/notion", (req, res) => {
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Fapi%2Fauth%2Fnotion%2Fcallback`;
+  res.json({ url: authUrl });
+});
+
+// 2. Callback route that Notion redirects to after user approval
+app.get("/api/auth/notion/callback", async (req, res) => {
+  const { code } = req.query;
+  if (!code) {
+    return res.status(400).send("Error: No authorization code provided.");
+  }
+
+  try {
+    // Exchange the authorization code for an access token
+    const tokenResponse = await fetch("https://api.notion.com/v1/oauth/token", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization:
+          "Basic " +
+          Buffer.from(
+            `${process.env.NOTION_OAUTH_CLIENT_ID}:${process.env.NOTION_OAUTH_CLIENT_SECRET}`
+          ).toString("base64"),
+      },
+      body: JSON.stringify({
+        grant_type: "authorization_code",
+        code: code,
+        redirect_uri: "http://localhost:3001/api/auth/notion/callback",
+      }),
+    });
+
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok) {
+      throw new Error(
+        tokenData.error_description || "Notion token exchange failed"
+      );
+    }
+
+    // Save the access token to the user's document in Firestore
+    const userRef = db.collection("users").doc("main_user");
+    await userRef.set({ notion_credentials: tokenData }, { merge: true });
+
+    console.log("Notion OAuth successful, credentials stored.");
+
+    // Redirect to a success page that will be handled by the background script
+    res.redirect("/auth-success.html?provider=notion");
+  } catch (error) {
+    console.error("Error authenticating with Notion:", error);
+    res.status(500).send("Notion authentication failed.");
+  }
+});
 // --- Notification Routes ---
 app.get("/api/notifications", async (req, res) => {
   try {
@@ -280,6 +463,95 @@ app.get("/api/notifications", async (req, res) => {
   } catch (error) {
     console.error("Error fetching notifications:", error);
     res.status(500).json({ error: "Failed to fetch notifications." });
+  }
+});
+// debug session
+app.get("/api/debug/installation", async (req, res) => {
+  try {
+    const userDoc = await db.collection("users").doc("main_user").get();
+    const data = userDoc.data();
+
+    console.log("=== INSTALLATION DEBUG ===");
+    console.log("User document exists:", userDoc.exists);
+    console.log("GitHub installation ID:", data?.github_installation_id);
+    console.log("Google tokens:", !!data?.google_tokens);
+    console.log("GitHub access token:", !!data?.github_access_token);
+    console.log("Full user data:", data);
+
+    res.json({
+      userExists: userDoc.exists,
+      installationId: data?.github_installation_id,
+      hasGoogleTokens: !!data?.google_tokens,
+      hasGithubToken: !!data?.github_access_token,
+      userData: data,
+    });
+  } catch (error) {
+    console.error("Debug error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 2. SECOND - Check what notifications exist in Firestore
+app.get("/api/debug/notifications", async (req, res) => {
+  try {
+    const notificationsSnapshot = await db
+      .collection("notifications")
+      .orderBy("timestamp", "desc")
+      .limit(10)
+      .get();
+
+    const notifications = [];
+    notificationsSnapshot.forEach((doc) => {
+      notifications.push({
+        id: doc.id,
+        ...doc.data(),
+      });
+    });
+
+    console.log("=== NOTIFICATIONS DEBUG ===");
+    console.log("Total notifications found:", notifications.length);
+    notifications.forEach((notif, index) => {
+      console.log(
+        `${index + 1}. ${notif.type} - ${notif.message} - ${notif.timestamp}`
+      );
+    });
+
+    res.json({ notifications, count: notifications.length });
+  } catch (error) {
+    console.error("Notifications debug error:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. THIRD - Test webhook endpoint manually
+app.post("/api/debug/webhook-test", async (req, res) => {
+  try {
+    console.log("=== WEBHOOK TEST ===");
+
+    // Create a test notification
+    const testNotification = {
+      type: "test",
+      repo: "test/repo",
+      message: "Test notification created manually",
+      url: "https://github.com/test/repo",
+      user: "testuser",
+      read: false,
+      timestamp: new Date(),
+      timestampMs: Date.now(),
+    };
+
+    await db.collection("notifications").add(testNotification);
+
+    console.log("Test notification created successfully");
+
+    res.json({
+      success: true,
+      message: "Test notification created",
+      notification: testNotification,
+    });
+  } catch (error) {
+    console.error("Webhook test error:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 // Delete a specific notification
@@ -836,6 +1108,10 @@ app.delete("/api/orders/:orderId", async (req, res) => {
         // Continue with local deletion even if AfterShip removal fails
       }
     }
+    //this one is bt the proactive assistant
+    // Add this route to your server.js file, preferably in the "Action Routes" section
+
+    // --- Product Analysis Route (for Proactive Assistant) ---
 
     // Delete from Firestore
     await db.collection("orders").doc(orderId).delete();
@@ -852,6 +1128,291 @@ app.delete("/api/orders/:orderId", async (req, res) => {
   }
 });
 
+app.post("/api/products/analyze", async (req, res) => {
+  const { productName, productDetails, userPreferences } = req.body;
+
+  // Enhanced validation
+  if (!productName) {
+    return res.status(400).json({
+      success: false,
+      error: "Product name is required.",
+    });
+  }
+
+  // Sanitize input to prevent prompt injection
+  const sanitizedProductName = productName.replace(/[<>{}]/g, "").trim();
+  if (sanitizedProductName.length < 3) {
+    return res.status(400).json({
+      success: false,
+      error: "Product name must be at least 3 characters long.",
+    });
+  }
+
+  // Build context from additional product details if available
+  let contextInfo = "";
+  if (productDetails) {
+    if (productDetails.price) contextInfo += `Price: ${productDetails.price}\n`;
+    if (productDetails.site) contextInfo += `Source: ${productDetails.site}\n`;
+    if (productDetails.url) contextInfo += `URL: ${productDetails.url}\n`;
+  }
+
+  // Include user preferences if provided
+  let preferencesContext = "";
+  if (userPreferences) {
+    if (userPreferences.budget)
+      preferencesContext += `Budget: ${userPreferences.budget}\n`;
+    if (userPreferences.useCase)
+      preferencesContext += `Intended use: ${userPreferences.useCase}\n`;
+    if (userPreferences.priorities)
+      preferencesContext += `Priorities: ${userPreferences.priorities.join(
+        ", "
+      )}\n`;
+  }
+
+  const prompt = `
+    Act as an expert product researcher and shopping advisor with deep knowledge of consumer electronics, fashion, home goods, and market trends. Analyze the following product and provide a comprehensive but concise analysis.
+
+    Product: "${sanitizedProductName}"
+    ${contextInfo ? `Additional Context:\n${contextInfo}` : ""}
+    ${preferencesContext ? `User Preferences:\n${preferencesContext}` : ""}
+
+    Please provide a detailed analysis with the following sections:
+
+    ## 🔍 **Product Overview**
+    Brief description of what this product is and its category.
+
+    ## ⭐ **Key Features & Specifications**
+    - List the most important features that make this product notable
+    - Include technical specs if relevant
+    - Highlight unique selling points
+
+    ## 💰 **Price Analysis**
+    - Categorize as budget/mid-range/premium
+    - Compare to similar products in the market
+    - Value proposition assessment
+    ${
+      productDetails?.price
+        ? `- Analysis of the listed price: ${productDetails.price}`
+        : ""
+    }
+
+    ## 👥 **Target Audience & Use Cases**
+    - Who would benefit most from this product
+    - Primary and secondary use cases
+    - Skill level required (beginner/intermediate/expert)
+
+    ## ✅ **Pros**
+    - 3-4 main advantages
+    - What users love about this product
+
+    ## ❌ **Cons**
+    - 2-3 potential drawbacks or limitations
+    - Common complaints or issues
+
+    ## 🏆 **Alternatives to Consider**
+    - 2-3 competing products in similar price range
+    - Brief explanation of how they differ
+
+    ## 🎯 **Bottom Line & Recommendation**
+    - Overall rating (out of 5 stars)
+    - Clear recommendation: Buy/Consider/Skip
+    - Best suited for specific user types
+    ${
+      preferencesContext
+        ? `- Specific recommendation based on user preferences`
+        : ""
+    }
+
+    Keep your response under 400 words while being comprehensive. Use clear markdown formatting with emojis for better readability. Be honest about both strengths and weaknesses.
+  `;
+
+  try {
+    console.log(`Analyzing product: ${sanitizedProductName}`);
+
+    // Add rate limiting check (optional)
+    const clientIP = req.ip || req.connection.remoteAddress;
+    // Implement rate limiting logic here if needed
+
+    const startTime = Date.now();
+    const result = await model.generateContent(prompt);
+    const analysisTime = Date.now() - startTime;
+
+    const analysis = result.response.text();
+
+    // Enhanced response with metadata
+    const response = {
+      success: true,
+      data: {
+        analysis: analysis,
+        productName: sanitizedProductName,
+        analyzedAt: new Date().toISOString(),
+        analysisTimeMs: analysisTime,
+        ...(productDetails && { productDetails }),
+        ...(userPreferences && { userPreferences }),
+      },
+      metadata: {
+        model: "gemini", // or whatever model you're using
+        version: "1.0",
+        analysisTime: analysisTime,
+      },
+    };
+
+    // Log successful analysis (for monitoring)
+    console.log(
+      `✅ Analysis completed for "${sanitizedProductName}" in ${analysisTime}ms`
+    );
+
+    res.json(response);
+  } catch (error) {
+    console.error("❌ Error analyzing product:", error);
+
+    // Enhanced error handling
+    let errorMessage = "Failed to analyze product.";
+    let statusCode = 500;
+
+    if (
+      error.message?.includes("quota") ||
+      error.message?.includes("rate limit")
+    ) {
+      errorMessage = "AI service quota exceeded. Please try again later.";
+      statusCode = 429;
+    } else if (error.message?.includes("timeout")) {
+      errorMessage = "Analysis timed out. Please try again.";
+      statusCode = 408;
+    } else if (error.message?.includes("invalid")) {
+      errorMessage = "Invalid product name or unsupported product type.";
+      statusCode = 400;
+    }
+
+    res.status(statusCode).json({
+      success: false,
+      error: errorMessage,
+      productName: sanitizedProductName,
+      timestamp: new Date().toISOString(),
+    });
+  }
+});
+
+// Additional endpoint for batch analysis (bonus feature)
+app.post("/api/products/analyze-batch", async (req, res) => {
+  const { products } = req.body;
+
+  if (!products || !Array.isArray(products) || products.length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: "Products array is required and must not be empty.",
+    });
+  }
+
+  if (products.length > 5) {
+    return res.status(400).json({
+      success: false,
+      error: "Maximum 5 products can be analyzed at once.",
+    });
+  }
+
+  try {
+    const analyses = [];
+
+    for (const product of products) {
+      if (!product.productName) continue;
+
+      const sanitizedName = product.productName.replace(/[<>{}]/g, "").trim();
+
+      const prompt = `
+        Provide a brief product analysis for: "${sanitizedName}"
+        
+        Include:
+        - Category and key features (2-3 points)
+        - Price tier (budget/mid/premium)
+        - Target user
+        - Overall rating (1-5 stars)
+        
+        Keep under 100 words.
+      `;
+
+      const result = await model.generateContent(prompt);
+      analyses.push({
+        productName: sanitizedName,
+        analysis: result.response.text(),
+        ...(product.productDetails && {
+          productDetails: product.productDetails,
+        }),
+      });
+
+      // Small delay to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    res.json({
+      success: true,
+      data: {
+        analyses,
+        analyzedAt: new Date().toISOString(),
+        count: analyses.length,
+      },
+    });
+  } catch (error) {
+    console.error("Error in batch analysis:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to complete batch analysis.",
+    });
+  }
+});
+
+// Health check endpoint for the analyzer
+app.get("/api/products/analyze/health", (req, res) => {
+  res.json({
+    success: true,
+    service: "Product Analyzer",
+    status: "healthy",
+    timestamp: new Date().toISOString(),
+    endpoints: [
+      "POST /api/products/analyze",
+      "POST /api/products/analyze-batch",
+    ],
+  });
+});
+//debug model
+
+app.post("/api/debug/followup", async (req, res) => {
+  const { previousAnalysis, newQuery } = req.body;
+
+  if (!previousAnalysis || !newQuery) {
+    return res
+      .status(400)
+      .json({ error: "Previous analysis and a new query are required." });
+  }
+
+  const prompt = `
+    Act as an expert senior web developer continuing a debugging conversation.
+    The user has received an initial analysis from you and is now asking a follow-up question.
+    Use the previous analysis for context to provide a concise and helpful answer to the new question.
+
+    **Previous Analysis:**
+    ---
+    ${previousAnalysis}
+    ---
+
+    **User's Follow-up Question:** "${newQuery}"
+
+    **Your Answer:**
+  `;
+
+  try {
+    console.log("Generating debug follow-up...");
+    const result = await model.generateContent(prompt);
+    const analysis = result.response.text();
+    res.json({ success: true, summary: analysis });
+  } catch (error) {
+    console.error("Error generating debug follow-up:", error);
+    res.status(500).json({
+      error:
+        "The AI model is currently overloaded. Please try again in a moment.",
+    });
+  }
+});
 // --- Snippet Saver Route ---
 app.post("/api/snippets/save", async (req, res) => {
   const { snippetText, sourceUrl } = req.body;
@@ -1081,27 +1642,52 @@ app.post("/api/github/pr/review", async (req, res) => {
     return res.status(400).json({ error: "Pull Request URL is required." });
   }
   try {
+    // --- Start: New GitHub App Authentication ---
     const userDoc = await db.collection("users").doc("main_user").get();
-    if (!userDoc.exists || !userDoc.data().github_access_token) {
-      return res.status(401).json({ error: "GitHub token not found." });
+    const installationId = userDoc.data()?.github_installation_id;
+    if (!installationId) {
+      throw new Error("GitHub App not installed for this user.");
     }
-    const accessToken = userDoc.data().github_access_token;
+
+    const appJwt = generateJwt();
+    const tokenResponse = await fetch(
+      `https://api.github.com/app/installations/${installationId}/access_tokens`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${appJwt}`,
+          Accept: "application/vnd.github.v3+json",
+        },
+      }
+    );
+    const tokenData = await tokenResponse.json();
+    if (!tokenResponse.ok) throw new Error("Failed to get installation token.");
+    const accessToken = tokenData.token;
+    // --- End: New GitHub App Authentication ---
+
     const apiUrl = prUrl
       .replace("github.com", "api.github.com/repos")
       .replace("/pull/", "/pulls/");
+
     const diffResponse = await fetch(apiUrl, {
       headers: {
+        // Use the new accessToken here
         Authorization: `token ${accessToken}`,
         Accept: "application/vnd.github.v3.diff",
       },
     });
-    if (!diffResponse.ok)
+
+    if (!diffResponse.ok) {
       throw new Error(`Failed to fetch PR diff: ${diffResponse.statusText}`);
+    }
+
     const diffText = await diffResponse.text();
     const prompt = `You are an expert code reviewer. Please review the following code changes (in .diff format) and provide a concise summary of potential issues, bugs, or style improvements. Format your response in Markdown.\n\nDiff:\n${diffText}`;
+
     const result = await model.generateContent(prompt);
     res.json({ review: result.response.text() });
   } catch (error) {
+    console.error("Error generating PR review:", error);
     res.status(500).json({ error: "Failed to generate PR review." });
   }
 });
@@ -1253,6 +1839,54 @@ app.delete("/api/research/task/:taskId", async (req, res) => {
   } catch (error) {
     console.error("Error deleting research task:", error);
     res.status(500).json({ error: "Failed to delete research task." });
+  }
+});
+// In server.js
+
+app.post("/api/debug/webpage", async (req, res) => {
+  const { consoleErrors, pageHtml } = req.body;
+
+  if (!pageHtml || !consoleErrors) {
+    return res
+      .status(400)
+      .json({ error: "Console errors and page HTML are required." });
+  }
+
+  const prompt = `
+    Act as an expert senior web developer and debugging specialist. I am providing you with the full HTML of a webpage and a list of JavaScript console errors that occurred when it loaded.
+
+    Your task is to:
+    1.  Analyze the HTML structure and the console errors together to identify the most likely root cause of the errors.
+    2.  Provide a clear, step-by-step explanation of the problem in Markdown.
+    3.  Suggest a specific, corrected code snippet to fix the issue.
+    4.  Search the web for 1-2 highly relevant links (from Stack Overflow, MDN Web Docs, or official documentation) that directly address the primary error.
+    5.  Format the entire response in clean Markdown. At the end, create a "Relevant Links" section for the URLs.
+
+    Here is the data:
+
+    **Console Errors:**
+    \`\`\`json
+    ${JSON.stringify(consoleErrors, null, 2)}
+    \`\`\`
+
+    **Page HTML:**
+    \`\`\`html
+    ${pageHtml.substring(0, 8000)}
+    \`\`\`
+
+    **Analysis, Solution, and Relevant Links:**
+  `;
+
+  try {
+    console.log("Generating webpage debug analysis...");
+    const result = await model.generateContent(prompt);
+    const analysis = result.response.text();
+    res.json({ success: true, summary: analysis }); // Sending back as 'summary' to match the existing handleAction flow
+  } catch (error) {
+    console.error("Error generating debug analysis:", error);
+    res
+      .status(500)
+      .json({ error: "Failed to generate debug analysis from AI." });
   }
 });
 app.get("/api/research/task/:taskId/download", async (req, res) => {
