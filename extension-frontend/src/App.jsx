@@ -96,21 +96,21 @@ const renderMarkdown = (text) => {
       // Headers
       .replace(
         /^### (.*$)/gm,
-        '<h3 style="margin: 16px 0 8px 0; font-weight: 600; color: #2c3e50;">$1</h3>'
+        '<h3 style="margin: 16px 0 8px 0; font-weight: 600; color: #5f7a7d;;">$1</h3>'
       )
       .replace(
         /^## (.*$)/gm,
-        '<h2 style="margin: 20px 0 12px 0; font-weight: 600; color: #2c3e50; font-size: 1.25rem;">$1</h2>'
+        '<h2 style="margin: 20px 0 12px 0; font-weight: 600; color: #5f7a7d;; font-size: 1.25rem;">$1</h2>'
       )
       .replace(
         /^# (.*$)/gm,
-        '<h1 style="margin: 24px 0 16px 0; font-weight: 600; color: #2c3e50; font-size: 1.5rem;">$1</h1>'
+        '<h1 style="margin: 24px 0 16px 0; font-weight: 600; color: #5f7a7d;; font-size: 1.5rem;">$1</h1>'
       )
 
       // Bold text
       .replace(
         /\*\*(.*?)\*\*/g,
-        '<strong style="font-weight: 600; color: #2c3e50;">$1</strong>'
+        '<strong style="font-weight: 600; color: ##5f7a7d;;">$1</strong>'
       )
 
       // Italic text

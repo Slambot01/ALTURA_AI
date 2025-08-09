@@ -128,16 +128,38 @@ function generateJwt() {
 //       console.log(`Received webhook for installation ID: ${installationId}`);
 //       res.status(200).send("Event successfully processed.");
 //     }
+// In server.js
+
+// In server.js
+// In server.js
+
 app.post(
   "/api/github/webhook",
   express.raw({ type: "application/json", limit: "5mb" }),
   async (req, res) => {
     try {
-      // ... (signature validation is fine) ...
+      // --- Webhook Signature Validation (Keep this for security) ---
+      const signature = crypto
+        .createHmac("sha256", process.env.GITHUB_APP_WEBHOOK_SECRET)
+        .update(req.body)
+        .digest("hex");
+      const trusted = Buffer.from(`sha256=${signature}`, "ascii");
+      const untrusted = Buffer.from(
+        req.headers["x-hub-signature-256"] || "",
+        "ascii"
+      );
+
+      if (!crypto.timingSafeEqual(trusted, untrusted)) {
+        console.error("Webhook validation failed! Secrets do not match.");
+        return res.status(401).send("Invalid signature");
+      }
+      // --- End of Validation ---
+
       const githubEvent = req.headers["x-github-event"];
       const data = JSON.parse(req.body);
-      let notification = null; // Initialize notification as null
+      let notification = null;
 
+      // Handle Pull Requests
       if (githubEvent === "pull_request") {
         const pr = data.pull_request;
         notification = {
@@ -147,8 +169,9 @@ app.post(
           url: pr.html_url,
           user: pr.user.login,
           read: false,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(), // Use server timestamp
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
         };
+        // Handle Pushes
       } else if (githubEvent === "push") {
         const pusher = data.pusher.name;
         const branch = data.ref.split("/").pop();
@@ -159,14 +182,57 @@ app.post(
           url: data.compare,
           user: pusher,
           read: false,
-          timestamp: admin.firestore.FieldValue.serverTimestamp(), // Use server timestamp
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
         };
+        // Handle New App Installations
+      } else if (githubEvent === "installation" && data.action === "created") {
+        const installationId = data.installation.id;
+        console.log(
+          `App installed with ID: ${installationId}. Saving to database via webhook.`
+        );
+
+        // Save the installation ID to the user document to update the app's state
+        const userRef = db.collection("users").doc("main_user");
+        await userRef.set(
+          { github_installation_id: installationId },
+          { merge: true }
+        );
+        console.log("✅ Successfully saved installation ID from webhook.");
+
+        // Also create a notification for the feed
+        notification = {
+          type: "installation",
+          repo: data.repositories
+            ? data.repositories.map((r) => r.full_name).join(", ")
+            : "All Repositories",
+          message: `🎉 AlturaAI App was successfully installed on '${data.installation.account.login}'!`,
+          url: data.installation.html_url,
+          user: data.sender.login,
+          read: false,
+          timestamp: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        // Handle App Uninstalls
+      } else if (githubEvent === "installation" && data.action === "deleted") {
+        console.log(
+          `App uninstalled for ID: ${data.installation.id}. Removing from database.`
+        );
+        const userRef = db.collection("users").doc("main_user");
+
+        // Atomically remove the installation ID from the user's document
+        await userRef.update({
+          github_installation_id: admin.firestore.FieldValue.delete(),
+        });
+
+        console.log("✅ Successfully removed installation ID from Firestore.");
+        // Acknowledge the event and stop processing, no notification needed
+        return res.status(200).send("Uninstallation event processed.");
+        // Handle all other events
       } else {
         console.log(`Received unhandled or ignored event type: ${githubEvent}`);
         return res.status(200).send("Event acknowledged but not processed.");
       }
 
-      // Only save if a notification object was created
+      // If a notification object was created, save it to Firestore
       if (notification) {
         console.log("Attempting to save notification to Firestore...");
         await db.collection("notifications").add(notification);
@@ -175,38 +241,14 @@ app.post(
 
       res.status(200).send("Event successfully processed.");
     } catch (error) {
-      console.error("--- FATAL WEBHOOK ERROR ---");
-      console.error(error);
-      console.error("---------------------------");
+      console.error("--- FATAL WEBHOOK ERROR ---", error);
       res.status(500).send("Internal Server Error occurred.");
     }
   }
 );
+
+// This line should come after your route definitions
 app.use(express.json({ limit: "5mb" }));
-
-// --- Routes (Organized by Function) ---
-
-// --- Authentication & Status Routes ---
-app.get("/api/auth/google", (req, res) => {
-  const scopes = [
-    "https://www.googleapis.com/auth/userinfo.profile",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/gmail.compose",
-    "https://www.googleapis.com/auth/calendar.readonly",
-    "https://www.googleapis.com/auth/gmail.readonly",
-  ];
-  const url = googleOauth2Client.generateAuthUrl({
-    access_type: "offline",
-    scope: scopes,
-    prompt: "consent",
-  });
-  res.json({ url });
-});
-//  Route to start the app installation flow
-app.get("/api/github/install", (req, res) => {
-  const installUrl = `https://github.com/apps/alturaai-copilot/installations/new`;
-  res.json({ url: installUrl });
-});
 
 // NEW: Callback that GitHub hits after a user installs the app
 app.get("/api/github/app/callback", async (req, res) => {
@@ -223,7 +265,7 @@ app.get("/api/github/app/callback", async (req, res) => {
       await userRef.set(
         {
           github_installation_id: installation_id,
-          installation_setup_action: setup_action,
+          installation_setup_action: setup_action || "installed",
           installation_date: admin.firestore.FieldValue.serverTimestamp(),
         },
         { merge: true }
@@ -304,6 +346,10 @@ async function testInstallation(installationId) {
 //     res.status(500).send("Authentication failed.");
 //   }
 // });
+app.get("/api/github/install", (req, res) => {
+  const installUrl = `https://github.com/apps/alturaai-copilot/installations/new`;
+  res.json({ url: installUrl });
+});
 app.get("/api/auth/google/callback", async (req, res) => {
   const { code } = req.query;
   try {
