@@ -3,15 +3,33 @@
   "name": "AlturaAI Copilot",
   "version": "0.1.0",
   "description": "Your AI-powered browser assistant.",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "permissions": [
+    "notifications",
     "activeTab",
     "storage",
+    "identity",
     "scripting",
     "alarms",
     "contextMenus",
     "sidePanel",
-    "debugger"
+    "debugger",
+    "history"
   ],
+  "oauth2": {
+    "client_id": "296537793338-t1b2unbhm9tkjike4o018csg6irk6qdt.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/userinfo.profile",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/calendar.events.readonly"
+    ]
+  },
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "Open AlturaAI Sidebar"

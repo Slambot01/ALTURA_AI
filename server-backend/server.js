@@ -12,8 +12,8 @@ const { YoutubeTranscript } = require("youtube-transcript");
 const PDFDocument = require("pdfkit");
 const jwt = require("jsonwebtoken");
 const fs = require("fs");
+const analyzeRouter = require("./src/api/routes/analyze");
 require("dotenv").config();
-
 // --- Firebase Admin SDK Initialization ---
 const serviceAccount = require("./serviceAccountKey.json");
 admin.initializeApp({
@@ -37,7 +37,15 @@ const notionParentPageId = process.env.NOTION_PARENT_PAGE_ID;
 // --- Basic Server Setup ---
 const app = express();
 const PORT = process.env.PORT || 3001;
-app.use(cors());
+const corsOptions = {
+  origin: [
+    "http://localhost:3000",
+    `chrome-extension://fejedlikmaohocdeohobekeenjmkfhfp`,
+  ],
+  credentials: true,
+};
+app.use(cors(corsOptions));
+app.use(express.json({ limit: "5mb" }));
 app.use(express.static("public"));
 // Helper function to create a JWT for app authentication
 function generateJwt() {
@@ -49,93 +57,171 @@ function generateJwt() {
   };
   return jwt.sign(payload, privateKey, { algorithm: "RS256" });
 }
+const verifyAuthToken = async (req, res, next) => {
+  try {
+    // Check for Authorization header
+    if (
+      !req.headers.authorization ||
+      !req.headers.authorization.startsWith("Bearer ")
+    ) {
+      return res.status(401).json({
+        error: "Unauthorized: No token provided",
+        code: "NO_TOKEN",
+        action: "REFRESH_TOKEN",
+      });
+    }
 
-// --- Webhook Route (Requires Raw Body Parser) ---
-// In your server.js, update the webhook route to store a plain timestamp
+    const idToken = req.headers.authorization.split("Bearer ")[1];
 
-// app.post(
-//   "/api/github/webhook",
-//   express.raw({ type: "application/json", limit: "5mb" }),
-//   async (req, res) => {
-//     console.log("Webhook event received. Validating signature...");
+    if (!idToken) {
+      return res.status(401).json({
+        error: "Unauthorized: Invalid token format",
+        code: "INVALID_TOKEN_FORMAT",
+        action: "REFRESH_TOKEN",
+      });
+    }
 
-//     try {
-//       const signature = crypto
-//         .createHmac("sha256", process.env.GITHUB_APP_WEBHOOK_SECRET)
-//         .update(req.body)
-//         .digest("hex");
-//       const trusted = Buffer.from(`sha256=${signature}`, "ascii");
-//       const untrusted = Buffer.from(
-//         req.headers["x-hub-signature-256"] || "",
-//         "ascii"
-//       );
+    console.log("🔐 Verifying token...");
 
-//       if (!crypto.timingSafeEqual(trusted, untrusted)) {
-//         console.error("Webhook validation failed! Secrets do not match.");
-//         return res.status(401).send("Invalid signature");
-//       }
+    // Verify the ID token with Firebase Admin
+    const decodedToken = await admin.auth().verifyIdToken(idToken, true); // Force refresh check
+    req.user = decodedToken;
 
-//       console.log("Signature validated. Processing event...");
-//       const githubEvent = req.headers["x-github-event"];
-//       const data = JSON.parse(req.body);
-//       const installationId = data.installation.id;
+    console.log(`✅ Token verified for user: ${decodedToken.uid}`);
 
-//       let notification = {
-//         read: false,
-//         timestamp: new Date(), // Use plain Date object instead of Firestore timestamp
-//         timestampMs: Date.now(), // Also store as milliseconds for easier handling
-//       };
+    // FIXED: Enhanced Google token refresh logic
+    const userDoc = await db.collection("users").doc(req.user.uid).get();
 
-//       if (githubEvent === "pull_request") {
-//         console.log("Processing a 'pull_request' event.");
-//         const pr = data.pull_request;
-//         notification.type = "pr";
-//         notification.repo = data.repository.full_name;
-//         notification.message = `PR #${data.number} ${data.action}: "${pr.title}"`;
-//         notification.url = pr.html_url;
-//         notification.user = pr.user.login;
-//         console.log("Attempting to save notification to Firestore...");
-//         await db.collection("notifications").add(notification);
-//         console.log("✅ Successfully saved notification to Firestore.");
-//       } else if (githubEvent === "push") {
-//         console.log("Processing a 'push' event.");
-//         const pusher = data.pusher.name;
-//         const branch = data.ref.split("/").pop();
-//         notification.type = "push";
-//         notification.repo = data.repository.full_name;
-//         notification.message = `${pusher} pushed ${data.commits.length} commit(s) to ${branch}`;
-//         notification.url = data.compare;
-//         notification.user = pusher;
-//         console.log("Attempting to save notification to Firestore...");
-//         await db.collection("notifications").add(notification);
-//         console.log("✅ Successfully saved notification to Firestore.");
-//       } else if (
-//         githubEvent === "installation" ||
-//         githubEvent === "installation_repositories"
-//       ) {
-//         console.log(`Processing an '${githubEvent}' event.`);
-//         // This event confirms the app was successfully installed or modified.
-//         // We don't need to save a notification, we just need to acknowledge it.
-//         return res.status(200).send("Installation event acknowledged.");
-//       } else {
-//         console.log(`Received unhandled event type: ${githubEvent}`);
-//         return res.status(200).send("Event received but not processed.");
-//       }
+    if (userDoc.exists && userDoc.data().google_tokens) {
+      const tokens = userDoc.data().google_tokens;
+      const requestOauth2Client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET
+      );
+      requestOauth2Client.setCredentials(tokens);
 
-//       console.log("Attempting to save notification to Firestore...");
-//       await db.collection("notifications").add(notification);
-//       console.log("✅ Successfully saved notification to Firestore.");
-//       console.log(`Received webhook for installation ID: ${installationId}`);
-//       res.status(200).send("Event successfully processed.");
-//     }
-// In server.js
+      // FIXED: Better token expiration check and refresh
+      try {
+        // Check if token is expired or will expire within 5 minutes
+        const isExpired =
+          !tokens.expiry_date || tokens.expiry_date <= Date.now();
+        const willExpireSoon =
+          tokens.expiry_date && tokens.expiry_date - Date.now() < 5 * 60 * 1000; // 5 minutes
 
-// In server.js
-// In server.js
+        if (
+          isExpired ||
+          willExpireSoon ||
+          requestOauth2Client.isTokenExpiring()
+        ) {
+          console.log(
+            "🔄 Google token is expired/expiring, attempting to refresh..."
+          );
 
+          if (!tokens.refresh_token) {
+            console.log(
+              "❌ No refresh token available, user needs to re-authenticate"
+            );
+            // Don't fail here, but log the issue
+          } else {
+            const { credentials } =
+              await requestOauth2Client.refreshAccessToken();
+
+            // Update the new tokens in Firestore
+            await db
+              .collection("users")
+              .doc(req.user.uid)
+              .update({
+                google_tokens: {
+                  ...credentials,
+                  // Preserve refresh_token if not returned in new credentials
+                  refresh_token:
+                    credentials.refresh_token || tokens.refresh_token,
+                },
+                last_token_refresh:
+                  admin.firestore.FieldValue.serverTimestamp(),
+              });
+
+            console.log("✅ Google token refreshed and updated in Firestore.");
+          }
+        }
+      } catch (refreshError) {
+        console.error("❌ Google token refresh failed:", refreshError);
+
+        // FIXED: Don't fail the entire request if Google token refresh fails
+        // Instead, let the request continue and handle it in the specific endpoint
+        console.log("⚠️  Continuing request without Google token refresh");
+      }
+    }
+
+    next();
+  } catch (error) {
+    console.error("❌ Token verification error:", error);
+
+    // Enhanced error handling with specific error codes
+    let errorResponse = {
+      error: "Authentication failed. Please log in again.",
+      code: "AUTH_FAILED",
+      action: "REFRESH_TOKEN",
+    };
+
+    // Handle different types of token errors
+    if (error.code === "auth/id-token-expired") {
+      errorResponse = {
+        error: "Session expired. Please refresh your token.",
+        code: "TOKEN_EXPIRED",
+        action: "REFRESH_TOKEN",
+      };
+    } else if (error.code === "auth/id-token-revoked") {
+      errorResponse = {
+        error: "Session has been revoked. Please log in again.",
+        code: "TOKEN_REVOKED",
+        action: "REAUTHENTICATE",
+      };
+    } else if (error.code === "auth/invalid-id-token") {
+      errorResponse = {
+        error: "Invalid session token. Please refresh your token.",
+        code: "INVALID_TOKEN",
+        action: "REFRESH_TOKEN",
+      };
+    } else if (error.code === "auth/argument-error") {
+      errorResponse = {
+        error: "Token format is invalid. Please refresh your token.",
+        code: "INVALID_TOKEN_FORMAT",
+        action: "REFRESH_TOKEN",
+      };
+    }
+
+    // Add debug info in development
+    if (process.env.NODE_ENV === "development") {
+      errorResponse.debug = {
+        message: error.message,
+        code: error.code,
+        stack: error.stack,
+      };
+    }
+
+    return res.status(401).json(errorResponse);
+  }
+};
+
+// Enhanced error handling middleware
+const handleAuthError = (error, req, res, next) => {
+  console.error("Authentication error:", error);
+
+  // If headers haven't been sent, send error response
+  if (!res.headersSent) {
+    return res.status(401).json({
+      error: "Authentication failed",
+      code: "AUTH_ERROR",
+    });
+  }
+
+  next(error);
+};
+app.use("/api/analyze", analyzeRouter);
 app.post(
   "/api/github/webhook",
-  express.raw({ type: "application/json", limit: "5mb" }),
+  express.raw({ type: "application/json" }),
   async (req, res) => {
     try {
       // --- Webhook Signature Validation (Keep this for security) ---
@@ -158,10 +244,25 @@ app.post(
       const githubEvent = req.headers["x-github-event"];
       const data = JSON.parse(req.body);
       let notification = null;
+      let userId = null; // Initialize userId to track which user gets the notification
 
       // Handle Pull Requests
       if (githubEvent === "pull_request") {
         const pr = data.pull_request;
+
+        // Find user by repository installation (if we have installation context)
+        if (data.installation && data.installation.id) {
+          const usersSnapshot = await db
+            .collection("users")
+            .where("github_installation_id", "==", String(data.installation.id))
+            .limit(1)
+            .get();
+
+          if (!usersSnapshot.empty) {
+            userId = usersSnapshot.docs[0].id;
+          }
+        }
+
         notification = {
           type: "pr",
           repo: data.repository.full_name,
@@ -175,6 +276,20 @@ app.post(
       } else if (githubEvent === "push") {
         const pusher = data.pusher.name;
         const branch = data.ref.split("/").pop();
+
+        // Find user by repository installation (if we have installation context)
+        if (data.installation && data.installation.id) {
+          const usersSnapshot = await db
+            .collection("users")
+            .where("github_installation_id", "==", String(data.installation.id))
+            .limit(1)
+            .get();
+
+          if (!usersSnapshot.empty) {
+            userId = usersSnapshot.docs[0].id;
+          }
+        }
+
         notification = {
           type: "push",
           repo: data.repository.full_name,
@@ -188,18 +303,38 @@ app.post(
       } else if (githubEvent === "installation" && data.action === "created") {
         const installationId = data.installation.id;
         console.log(
-          `App installed with ID: ${installationId}. Saving to database via webhook.`
+          `App installed with ID: ${installationId}. Looking for a pending user.`
         );
 
-        // Save the installation ID to the user document to update the app's state
-        const userRef = db.collection("users").doc("main_user");
-        await userRef.set(
-          { github_installation_id: installationId },
-          { merge: true }
-        );
-        console.log("✅ Successfully saved installation ID from webhook.");
+        // Find the user who was in the process of installing
+        const usersSnapshot = await db
+          .collection("users")
+          .where("github_installation_status", "==", "pending")
+          .limit(1)
+          .get();
 
-        // Also create a notification for the feed
+        if (usersSnapshot.empty) {
+          console.log(
+            `Webhook for installation ID ${installationId} but no pending user found.`
+          );
+          return res.status(200).send("No pending installation found.");
+        }
+
+        const userDoc = usersSnapshot.docs[0];
+        userId = userDoc.id; // Set userId for notification saving
+        userId = userDoc.id; // Set userId for notification saving
+
+        // Assign the installation ID to this user and remove the pending status
+        await userDoc.ref.update({
+          github_installation_id: String(installationId),
+          github_installation_status: admin.firestore.FieldValue.delete(), // Clean up the placeholder
+        });
+
+        console.log(
+          `✅ Successfully linked installation ID ${installationId} to user ${userId}.`
+        );
+
+        // Now, create the success notification for this user
         notification = {
           type: "installation",
           repo: data.repositories
@@ -211,32 +346,113 @@ app.post(
           read: false,
           timestamp: admin.firestore.FieldValue.serverTimestamp(),
         };
-        // Handle App Uninstalls
       } else if (githubEvent === "installation" && data.action === "deleted") {
+        const installationId = data.installation.id;
         console.log(
-          `App uninstalled for ID: ${data.installation.id}. Removing from database.`
+          `App uninstalled for ID: ${installationId}. Removing from database.`
         );
-        const userRef = db.collection("users").doc("main_user");
 
-        // Atomically remove the installation ID from the user's document
-        await userRef.update({
+        // FIX: Find the user by their installationId, not an undefined uid
+        const usersSnapshot = await db
+          .collection("users")
+          .where("github_installation_id", "==", String(installationId)) // Ensure type match
+          .limit(1)
+          .get();
+
+        if (usersSnapshot.empty) {
+          console.log(
+            `Uninstallation event for an unknown installation ID: ${installationId}`
+          );
+          return res
+            .status(200)
+            .send("Installation not found, nothing to delete.");
+        }
+
+        // Get the user's document reference from the query result
+        const userDoc = usersSnapshot.docs[0];
+
+        // Atomically remove the installation ID from that user's document
+        await userDoc.ref.update({
           github_installation_id: admin.firestore.FieldValue.delete(),
         });
 
-        console.log("✅ Successfully removed installation ID from Firestore.");
-        // Acknowledge the event and stop processing, no notification needed
+        console.log(
+          `✅ Successfully removed installation ID from user ${userDoc.id}.`
+        );
         return res.status(200).send("Uninstallation event processed.");
-        // Handle all other events
+      } else if (githubEvent === "installation_repositories") {
+        const installationId = data.installation.id;
+        const action = data.action; // "added" or "removed"
+
+        console.log(
+          `Repositories ${action} for installation ID: ${installationId}`
+        );
+
+        // Find the user associated with this installation
+        const usersSnapshot = await db
+          .collection("users")
+          .where("github_installation_id", "==", String(installationId))
+          .limit(1)
+          .get();
+
+        if (usersSnapshot.empty) {
+          console.log(
+            `Installation repositories event for unknown installation ID: ${installationId}`
+          );
+          return res.status(200).send("Installation not found.");
+        }
+
+        const userDoc = usersSnapshot.docs[0];
+        const userId = userDoc.id;
+
+        // Create notification for repository changes
+        if (action === "added" && data.repositories_added) {
+          const addedRepos = data.repositories_added
+            .map((repo) => repo.full_name)
+            .join(", ");
+          notification = {
+            type: "repo_added",
+            repo: addedRepos,
+            message: `📁 New repositories added to AlturaAI: ${addedRepos}`,
+            url: data.installation.html_url,
+            user: data.sender.login,
+            read: false,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          };
+        } else if (action === "removed" && data.repositories_removed) {
+          const removedRepos = data.repositories_removed
+            .map((repo) => repo.full_name)
+            .join(", ");
+          notification = {
+            type: "repo_removed",
+            repo: removedRepos,
+            message: `📁 Repositories removed from AlturaAI: ${removedRepos}`,
+            url: data.installation.html_url,
+            user: data.sender.login,
+            read: false,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+          };
+        }
       } else {
         console.log(`Received unhandled or ignored event type: ${githubEvent}`);
         return res.status(200).send("Event acknowledged but not processed.");
       }
 
       // If a notification object was created, save it to Firestore
-      if (notification) {
-        console.log("Attempting to save notification to Firestore...");
-        await db.collection("notifications").add(notification);
+      if (notification && userId) {
+        console.log(
+          `Attempting to save notification to Firestore for user: ${userId}...`
+        );
+        await db
+          .collection("users")
+          .doc(userId)
+          .collection("notifications")
+          .add(notification);
         console.log("✅ Successfully saved notification to Firestore.");
+      } else if (notification && !userId) {
+        console.log(
+          "⚠️  Notification created but no userId found - skipping Firestore save"
+        );
       }
 
       res.status(200).send("Event successfully processed.");
@@ -246,22 +462,21 @@ app.post(
     }
   }
 );
-
 // This line should come after your route definitions
-app.use(express.json({ limit: "5mb" }));
 
 // NEW: Callback that GitHub hits after a user installs the app
 app.get("/api/github/app/callback", async (req, res) => {
   const { installation_id, setup_action } = req.query;
+  const { uid } = req.user; // FIX: Get the user ID from the request
 
-  console.log("=== GITHUB CALLBACK ===");
+  console.log("=== GITHUB APP CALLBACK ===");
+  console.log("User ID:", uid);
   console.log("Installation ID:", installation_id);
-  console.log("Setup Action:", setup_action);
-  console.log("Full query params:", req.query);
 
   try {
     if (installation_id) {
-      const userRef = db.collection("users").doc("main_user");
+      // This will now work correctly
+      const userRef = db.collection("users").doc(uid);
       await userRef.set(
         {
           github_installation_id: installation_id,
@@ -271,9 +486,11 @@ app.get("/api/github/app/callback", async (req, res) => {
         { merge: true }
       );
 
-      console.log(`✅ GitHub App installed with ID: ${installation_id}`);
+      console.log(
+        `✅ GitHub App installed for user ${uid} with ID: ${installation_id}`
+      );
 
-      // Test the installation immediately
+      // Optional: Test the installation immediately
       await testInstallation(installation_id);
 
       res.redirect("/auth-success.html?provider=github-app");
@@ -331,45 +548,110 @@ async function testInstallation(installationId) {
   }
 }
 
-// app.get("/api/auth/google/callback", async (req, res) => {
-//   const { code } = req.query;
-//   try {
-//     const { tokens } = await googleOauth2Client.getToken(code);
-//     const userRef = db.collection("users").doc("main_user");
-//     await userRef.set({ google_tokens: tokens }, { merge: true });
-//     console.log("Google Auth successful, tokens stored in Firestore.");
-//     res.send(
-//       "<h1>Authentication successful!</h1><p>You can close this tab now.</p>"
-//     );
-//   } catch (error) {
-//     console.error("Error authenticating with Google:", error);
-//     res.status(500).send("Authentication failed.");
-//   }
-// });
-app.get("/api/github/install", (req, res) => {
-  const installUrl = `https://github.com/apps/alturaai-copilot/installations/new`;
-  res.json({ url: installUrl });
-});
-app.get("/api/auth/google/callback", async (req, res) => {
-  const { code } = req.query;
+app.post("/api/auth/signin", verifyAuthToken, async (req, res) => {
+  const { uid, email, name } = req.user;
   try {
-    const { tokens } = await googleOauth2Client.getToken(code);
-    const userRef = db.collection("users").doc("main_user");
-    await userRef.set({ google_tokens: tokens }, { merge: true });
-    console.log("Google Auth successful, tokens stored in Firestore.");
-    res.redirect("/auth-success.html?provider=google");
+    await db
+      .collection("users")
+      .doc(uid)
+      .set(
+        {
+          email,
+          name: name || email, // Use email as name if name is not available
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    res.json({ success: true, message: `User ${uid} processed.` });
   } catch (error) {
-    console.error("Error authenticating with Google:", error);
-    res.status(500).send("Authentication failed.");
+    res.status(500).json({ error: "Failed to process sign-in." });
   }
 });
 
-app.get("/api/auth/github", (req, res) => {
+app.get("/api/github/install", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
+  const installUrl = `https://github.com/apps/alturaai-copilot/installations/new`;
+
+  try {
+    // Save a placeholder to indicate this user is currently installing the app
+    const userRef = db.collection("users").doc(uid);
+    await userRef.set(
+      { github_installation_status: "pending" },
+      { merge: true }
+    );
+
+    res.json({ url: installUrl });
+  } catch (error) {
+    console.error("Error setting pending installation status:", error);
+    res.status(500).json({ error: "Failed to start installation process." });
+  }
+});
+// This new endpoint generates the Google Auth URL
+app.get("/api/auth/google", verifyAuthToken, (req, res) => {
+  const { uid } = req.user;
+  const url = googleOauth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: [
+      "https://www.googleapis.com/auth/userinfo.email",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.modify",
+
+      "https://www.googleapis.com/auth/calendar.events.readonly",
+    ],
+    prompt: "consent", // This forces a new consent screen
+    state: uid,
+  });
+  res.json({ url });
+});
+
+app.get("/api/auth/google/callback", async (req, res) => {
+  // <-- verifyAuthToken is REMOVED
+  const { code, state } = req.query; // Get the code and the state from the URL
+  const uid = state; // The state is the user ID we passed
+
+  if (!uid) {
+    return res
+      .status(400)
+      .send("Authentication failed: User ID not found in state.");
+  }
+
+  if (!code) {
+    return res
+      .status(400)
+      .send("Authentication failed: Google code not found in URL.");
+  }
+
+  try {
+    const { tokens } = await googleOauth2Client.getToken(code);
+    const userRef = db.collection("users").doc(uid); // Use the UID from the state
+
+    await userRef.set(
+      {
+        google_tokens: tokens,
+        google_auth_status: "active",
+      },
+      { merge: true }
+    );
+
+    console.log(`Google Auth successful for user ${uid}, tokens stored.`);
+
+    // Redirect to a simple success page
+    res.redirect("/auth-success.html?provider=google");
+  } catch (error) {
+    console.error("Error authenticating with Google callback:", error);
+    res.status(500).send("Authentication failed. Please try again.");
+  }
+});
+app.get("/api/auth/github", verifyAuthToken, (req, res) => {
   const url = `https://github.com/login/oauth/authorize?client_id=${process.env.GITHUB_CLIENT_ID}&scope=repo`;
   res.json({ url });
 });
-app.get("/api/auth/github/callback", async (req, res) => {
+app.get("/api/github/oauth/callback", verifyAuthToken, async (req, res) => {
   const { code } = req.query;
+  const { uid } = req.user; // FIX: Get the user ID from the request
+
   try {
     const tokenResponse = await fetch(
       "https://github.com/login/oauth/access_token",
@@ -388,47 +670,81 @@ app.get("/api/auth/github/callback", async (req, res) => {
     );
     const tokenData = await tokenResponse.json();
     const accessToken = tokenData.access_token;
-    const userRef = db.collection("users").doc("main_user");
+
+    // This will now work correctly
+    const userRef = db.collection("users").doc(uid);
     await userRef.set({ github_access_token: accessToken }, { merge: true });
-    console.log("GitHub Auth successful, token stored in Firestore.");
+
+    console.log(`GitHub OAuth successful for user ${uid}, token stored.`);
     res.redirect("/auth-success.html?provider=github");
   } catch (error) {
     console.error("Error authenticating with GitHub:", error);
     res.status(500).send("GitHub Authentication failed.");
   }
 });
-app.get("/api/auth/status", async (req, res) => {
+app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
+
   try {
-    const userDoc = await db.collection("users").doc("main_user").get();
+    const userDoc = await db.collection("users").doc(uid).get();
     const data = userDoc.data();
+
+    // Check token expiration times
+    const tokenInfo = {};
+
+    if (data && data.google_tokens) {
+      const tokens = data.google_tokens;
+      if (tokens.expiry_date) {
+        tokenInfo.googleTokenExpiry = new Date(
+          tokens.expiry_date
+        ).toISOString();
+        tokenInfo.googleTokenValid = tokens.expiry_date > Date.now();
+      }
+    }
+
     res.json({
-      isGoogleLoggedIn: !!(data && data.google_tokens),
-      isGithubLoggedIn: !!(data && data.github_access_token),
-      isNotionConnected: !!data.notion_credentials,
-      isGithubAppInstalled: !!data.github_installation_id,
+      success: true,
+      user: {
+        uid: uid,
+        email: req.user.email,
+        name: req.user.name,
+      },
+      connections: {
+        isGoogleLoggedIn: !!(data && data.google_tokens),
+        isGithubLoggedIn: !!(data && data.github_access_token),
+        isNotionConnected: !!data.notion_credentials,
+        isGithubAppInstalled: !!data.github_installation_id,
+      },
+      tokenInfo: tokenInfo,
+      lastTokenRefresh:
+        data?.last_token_refresh?.toDate?.()?.toISOString() || null,
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     console.error("Error checking auth status:", error);
-    res.status(500).json({ error: "Failed to check auth status." });
+    res.status(500).json({
+      error: "Failed to check auth status.",
+      code: "STATUS_CHECK_FAILED",
+    });
   }
 });
 // --- Notion OAuth Routes ---
 
 // 1. Route to start the Notion connection process
-app.get("/api/auth/notion", (req, res) => {
-  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Fapi%2Fauth%2Fnotion%2Fcallback`;
+app.get("/api/auth/notion", verifyAuthToken, (req, res) => {
+  const { uid } = req.user;
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Fapi%2Fauth%2Fnotion%2Fcallback&state=${uid}`;
   res.json({ url: authUrl });
 });
 
 // 2. Callback route that Notion redirects to after user approval
 app.get("/api/auth/notion/callback", async (req, res) => {
-  const { code } = req.query;
-  if (!code) {
-    return res.status(400).send("Error: No authorization code provided.");
+  const { code, state } = req.query;
+  const uid = state;
+  if (!code || !uid) {
+    return res.status(400).send("Error: Missing code or state.");
   }
-
   try {
-    // Exchange the authorization code for an access token
     const tokenResponse = await fetch("https://api.notion.com/v1/oauth/token", {
       method: "POST",
       headers: {
@@ -442,24 +758,21 @@ app.get("/api/auth/notion/callback", async (req, res) => {
       body: JSON.stringify({
         grant_type: "authorization_code",
         code: code,
-        redirect_uri: "http://localhost:3001/api/auth/notion/callback",
+        // FIX: Pass the correct redirect_uri from environment variables
+        redirect_uri: `http://localhost:3001/api/auth/notion/callback`,
       }),
     });
-
     const tokenData = await tokenResponse.json();
     if (!tokenResponse.ok) {
       throw new Error(
         tokenData.error_description || "Notion token exchange failed"
       );
     }
-
-    // Save the access token to the user's document in Firestore
-    const userRef = db.collection("users").doc("main_user");
-    await userRef.set({ notion_credentials: tokenData }, { merge: true });
-
-    console.log("Notion OAuth successful, credentials stored.");
-
-    // Redirect to a success page that will be handled by the background script
+    await db
+      .collection("users")
+      .doc(uid)
+      .set({ notion_credentials: tokenData }, { merge: true });
+    console.log(`✅ Notion OAuth successful for user ${uid}.`);
     res.redirect("/auth-success.html?provider=notion");
   } catch (error) {
     console.error("Error authenticating with Notion:", error);
@@ -467,9 +780,12 @@ app.get("/api/auth/notion/callback", async (req, res) => {
   }
 });
 // --- Notification Routes ---
-app.get("/api/notifications", async (req, res) => {
+app.get("/api/notifications", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   try {
     const notificationsSnapshot = await db
+      .collection("users")
+      .doc(uid)
       .collection("notifications")
       .orderBy("timestamp", "desc")
       .limit(20)
@@ -512,9 +828,10 @@ app.get("/api/notifications", async (req, res) => {
   }
 });
 // debug session
-app.get("/api/debug/installation", async (req, res) => {
+app.get("/api/debug/installation", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   try {
-    const userDoc = await db.collection("users").doc("main_user").get();
+    const userDoc = await db.collection("users").doc(uid).get();
     const data = userDoc.data();
 
     console.log("=== INSTALLATION DEBUG ===");
@@ -538,9 +855,12 @@ app.get("/api/debug/installation", async (req, res) => {
 });
 
 // 2. SECOND - Check what notifications exist in Firestore
-app.get("/api/debug/notifications", async (req, res) => {
+app.get("/api/debug/notifications", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   try {
     const notificationsSnapshot = await db
+      .collection("users")
+      .doc(uid)
       .collection("notifications")
       .orderBy("timestamp", "desc")
       .limit(10)
@@ -570,7 +890,7 @@ app.get("/api/debug/notifications", async (req, res) => {
 });
 
 // 3. THIRD - Test webhook endpoint manually
-app.post("/api/debug/webhook-test", async (req, res) => {
+app.post("/api/debug/webhook-test", verifyAuthToken, async (req, res) => {
   try {
     console.log("=== WEBHOOK TEST ===");
 
@@ -601,21 +921,85 @@ app.post("/api/debug/webhook-test", async (req, res) => {
   }
 });
 // Delete a specific notification
-app.delete("/api/notifications/:id", async (req, res) => {
+app.delete("/api/notifications/:id", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
+  const { id } = req.params;
   try {
     const { id } = req.params;
 
     // Delete from Firestore
-    await db.collection("notifications").doc(id).delete();
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("notifications")
+      .doc(id)
+      .delete();
 
-    console.log(`Notification ${id} deleted successfully.`);
+    console.log(`Notification ${id} deleted successfully for user ${uid}.`);
     res.json({ success: true, message: "Notification deleted successfully." });
   } catch (error) {
     console.error("Error deleting notification:", error);
     res.status(500).json({ error: "Failed to delete notification." });
   }
 });
+// Add this new route to your server.js file
 
+app.post("/api/stocks/check-now", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
+  console.log(`Manual stock check triggered for user: ${uid}`);
+  let triggeredCount = 0;
+
+  try {
+    const alertsSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("stock_alerts")
+      .where("status", "==", "active")
+      .get();
+
+    if (alertsSnapshot.empty) {
+      return res.json({ success: true, message: "No active alerts to check." });
+    }
+
+    // This is the same logic from your cron job, but just for the current user
+    for (const doc of alertsSnapshot.docs) {
+      const alert = doc.data();
+      const response = await fetch(
+        `https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${process.env.FINNHUB_API_KEY}`
+      );
+      const data = await response.json();
+      const currentPrice = data.c;
+
+      if (currentPrice && currentPrice >= alert.targetPrice) {
+        await doc.ref.update({
+          status: "triggered",
+          currentPrice: currentPrice,
+          triggeredAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        await db
+          .collection("users")
+          .doc(uid)
+          .collection("notifications")
+          .add({
+            type: "stock",
+            message: `📈 STOCK ALERT: ${alert.ticker} has reached your target of $${alert.targetPrice}!`,
+            timestamp: admin.firestore.FieldValue.serverTimestamp(),
+            read: false,
+          });
+        triggeredCount++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Check complete. ${triggeredCount} new alert(s) triggered.`,
+    });
+  } catch (error) {
+    console.error("Error during manual stock check:", error);
+    res.status(500).json({ error: "Failed to check stock prices." });
+  }
+});
 // --- Webhook Route (Requires Raw Body Parser) ---
 
 // --- Action Routes ---
@@ -708,18 +1092,77 @@ function extractEmailBody(payload) {
 
   return emailBody;
 }
-
-// --- Smarter Order Scanning Route ---
-app.post("/api/orders/scan-inbox", async (req, res) => {
+// Add a token refresh endpoint
+app.post("/api/auth/refresh-token", async (req, res) => {
   try {
-    const userDoc = await db.collection("users").doc("main_user").get();
-    if (!userDoc.exists || !userDoc.data().google_tokens) {
-      return res
-        .status(401)
-        .json({ error: "User is not authenticated with Google." });
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(400).json({
+        error: "Refresh token is required",
+        code: "NO_REFRESH_TOKEN",
+      });
     }
-    googleOauth2Client.setCredentials(userDoc.data().google_tokens);
-    const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
+
+    res.json({
+      success: true,
+      message: "Token refresh initiated",
+      action: "GET_NEW_TOKEN",
+    });
+  } catch (error) {
+    console.error("Token refresh error:", error);
+    res.status(500).json({
+      error: "Failed to refresh token",
+      code: "REFRESH_FAILED",
+    });
+  }
+});
+// --- Smarter Order Scanning Route ---
+app.post("/api/orders/scan-inbox", verifyAuthToken, async (req, res) => {
+  try {
+    const { uid } = req.user; // ADD THIS LINE
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (!userDoc.exists || !userDoc.data().google_tokens) {
+      return res.status(401).json({
+        error: "User is not authenticated with Google.",
+        code: "NO_GOOGLE_TOKENS",
+      });
+    }
+
+    // Create OAuth2 client and set credentials
+    const requestOauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    requestOauth2Client.setCredentials(userDoc.data().google_tokens);
+
+    // Check if token needs refresh
+    try {
+      if (requestOauth2Client.isTokenExpiring()) {
+        console.log("Google token is expiring, attempting to refresh...");
+
+        const { credentials } = await requestOauth2Client.refreshAccessToken();
+
+        // Update the new tokens in Firestore
+        await db.collection("users").doc(uid).update({
+          google_tokens: credentials,
+          last_token_refresh: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Update the client with new credentials
+        requestOauth2Client.setCredentials(credentials);
+        console.log("Google token refreshed successfully for inbox scan");
+      }
+    } catch (refreshError) {
+      console.error("Google token refresh failed in inbox scan:", refreshError);
+      return res.status(401).json({
+        error:
+          "Your Google session has expired. Please reconnect your Google account.",
+        code: "TOKEN_REFRESH_FAILED",
+      });
+    }
+
+    const gmail = google.gmail({ version: "v1", auth: requestOauth2Client });
 
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
@@ -750,7 +1193,7 @@ app.post("/api/orders/scan-inbox", async (req, res) => {
     const processedOrders = [];
 
     for (const message of messages) {
-      const orderData = await processOrderEmail(message, gmail);
+      const orderData = await processOrderEmail(message, gmail, uid);
       if (orderData) {
         ordersFound++;
         processedOrders.push(orderData);
@@ -777,7 +1220,7 @@ app.post("/api/orders/scan-inbox", async (req, res) => {
   }
 });
 
-async function processOrderEmail(message, gmail) {
+async function processOrderEmail(message, gmail, uid) {
   const prompt = `
 You are an expert email parser specializing in Indian e-commerce order confirmations. 
 Analyze the following email content (which may contain HTML) and extract order details.
@@ -877,6 +1320,8 @@ JSON Response:
 
       // Save to Firestore
       await db
+        .collection("users")
+        .doc(uid)
         .collection("orders")
         .doc(orderData.orderId)
         .set(
@@ -909,12 +1354,15 @@ JSON Response:
 }
 
 // --- Get Orders List Route ---
-app.get("/api/orders/list", async (req, res) => {
+app.get("/api/orders/list", verifyAuthToken, async (req, res) => {
   try {
+    const { uid } = req.user;
     const ordersSnapshot = await db
+      .collection("users")
+      .doc(uid)
       .collection("orders")
       .orderBy("scannedAt", "desc")
-      .limit(50) // Limit to most recent 50 orders
+      .limit(50)
       .get();
 
     const orders = [];
@@ -949,11 +1397,16 @@ app.get("/api/orders/list", async (req, res) => {
 });
 
 // --- Get Order Details Route ---
-app.get("/api/orders/:orderId", async (req, res) => {
+app.get("/api/orders/:orderId", verifyAuthToken, async (req, res) => {
   const { orderId } = req.params;
-
+  const { uid } = req.user;
   try {
-    const orderDoc = await db.collection("orders").doc(orderId).get();
+    const orderDoc = await db
+      .collection("users")
+      .doc(uid)
+      .collection("orders")
+      .doc(orderId)
+      .get();
 
     if (!orderDoc.exists) {
       return res.status(404).json({ error: "Order not found" });
@@ -976,10 +1429,15 @@ app.get("/api/orders/:orderId", async (req, res) => {
           const tracking = trackingData.data.tracking;
 
           // Update order with latest tracking info
-          await db.collection("orders").doc(orderId).update({
-            status: tracking.tag,
-            lastChecked: admin.firestore.FieldValue.serverTimestamp(),
-          });
+          await db
+            .collection("users")
+            .doc(uid)
+            .collection("orders")
+            .doc(orderId)
+            .update({
+              status: tracking.tag,
+              lastChecked: admin.firestore.FieldValue.serverTimestamp(),
+            });
 
           orderData.status = tracking.tag;
           orderData.trackingEvents = tracking.checkpoints || [];
@@ -1003,7 +1461,8 @@ app.get("/api/orders/:orderId", async (req, res) => {
 });
 
 // --- Add Parcel Tracking Route ---
-app.post("/api/orders/add-tracking", async (req, res) => {
+app.post("/api/orders/add-tracking", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   const { orderId, trackingNumber } = req.body;
   if (!orderId || !trackingNumber) {
     return res
@@ -1042,12 +1501,17 @@ app.post("/api/orders/add-tracking", async (req, res) => {
     }
 
     const aftershipTrackingId = aftershipData.data.tracking.id;
-    await db.collection("orders").doc(orderId).update({
-      aftershipTrackingId: aftershipTrackingId,
-      carrier: carrierSlug,
-      status: aftershipData.data.tracking.tag,
-      trackingNumber: trackingNumber, // Save the tracking number itself
-    });
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("orders")
+      .doc(orderId)
+      .update({
+        aftershipTrackingId: aftershipTrackingId,
+        carrier: carrierSlug,
+        status: aftershipData.data.tracking.tag,
+        trackingNumber: trackingNumber, // Save the tracking number itself
+      });
 
     res.json({
       success: true,
@@ -1060,9 +1524,12 @@ app.post("/api/orders/add-tracking", async (req, res) => {
 });
 
 // --- Bulk Update Order Statuses Route ---
-app.post("/api/orders/bulk-update", async (req, res) => {
+app.post("/api/orders/bulk-update", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   try {
     const ordersSnapshot = await db
+      .collection("users")
+      .doc(uid)
       .collection("orders")
       .where("aftershipTrackingId", "!=", null)
       .get();
@@ -1113,13 +1580,18 @@ app.post("/api/orders/bulk-update", async (req, res) => {
   }
 });
 // --- Delete Order Route ---
-app.delete("/api/orders/:orderId", async (req, res) => {
+app.delete("/api/orders/:orderId", verifyAuthToken, async (req, res) => {
   try {
+    const { uid } = req.user;
     const { orderId } = req.params;
 
     // Check if the order exists first
-    const orderDoc = await db.collection("orders").doc(orderId).get();
-
+    const orderDoc = await db
+      .collection("users")
+      .doc(uid)
+      .collection("orders")
+      .doc(orderId)
+      .get();
     if (!orderDoc.exists) {
       return res.status(404).json({ error: "Order not found." });
     }
@@ -1160,7 +1632,12 @@ app.delete("/api/orders/:orderId", async (req, res) => {
     // --- Product Analysis Route (for Proactive Assistant) ---
 
     // Delete from Firestore
-    await db.collection("orders").doc(orderId).delete();
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("orders")
+      .doc(orderId)
+      .delete();
 
     console.log(`Order ${orderId} deleted successfully.`);
     res.json({
@@ -1174,7 +1651,7 @@ app.delete("/api/orders/:orderId", async (req, res) => {
   }
 });
 
-app.post("/api/products/analyze", async (req, res) => {
+app.post("/api/products/analyze", verifyAuthToken, async (req, res) => {
   const { productName, productDetails, userPreferences } = req.body;
 
   // Enhanced validation
@@ -1340,7 +1817,7 @@ app.post("/api/products/analyze", async (req, res) => {
 });
 
 // Additional endpoint for batch analysis (bonus feature)
-app.post("/api/products/analyze-batch", async (req, res) => {
+app.post("/api/products/analyze-batch", verifyAuthToken, async (req, res) => {
   const { products } = req.body;
 
   if (!products || !Array.isArray(products) || products.length === 0) {
@@ -1408,7 +1885,7 @@ app.post("/api/products/analyze-batch", async (req, res) => {
 });
 
 // Health check endpoint for the analyzer
-app.get("/api/products/analyze/health", (req, res) => {
+app.get("/api/products/analyze/health", verifyAuthToken, (req, res) => {
   res.json({
     success: true,
     service: "Product Analyzer",
@@ -1422,7 +1899,7 @@ app.get("/api/products/analyze/health", (req, res) => {
 });
 //debug model
 
-app.post("/api/debug/followup", async (req, res) => {
+app.post("/api/debug/followup", verifyAuthToken, async (req, res) => {
   const { previousAnalysis, newQuery } = req.body;
 
   if (!previousAnalysis || !newQuery) {
@@ -1460,8 +1937,11 @@ app.post("/api/debug/followup", async (req, res) => {
   }
 });
 // --- Snippet Saver Route ---
-app.post("/api/snippets/save", async (req, res) => {
+app.post("/api/snippets/save", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   const { snippetText, sourceUrl } = req.body;
+
+  // const { snippetText, sourceUrl } = req.body;
   if (!snippetText || !sourceUrl) {
     return res
       .status(400)
@@ -1469,7 +1949,7 @@ app.post("/api/snippets/save", async (req, res) => {
   }
 
   try {
-    await db.collection("snippets").add({
+    await db.collection("users").doc(uid).collection("snippets").add({
       text: snippetText,
       url: sourceUrl,
       savedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1480,12 +1960,19 @@ app.post("/api/snippets/save", async (req, res) => {
     res.status(500).json({ error: "Failed to save snippet." });
   }
 });
-app.delete("/api/snippets/:id", async (req, res) => {
+app.delete("/api/snippets/:id", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
+  const { id } = req.params;
   try {
     const { id } = req.params;
 
     // Delete from Firestore
-    await db.collection("snippets").doc(id).delete();
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("snippets")
+      .doc(id)
+      .delete();
 
     console.log(`Snippet ${id} deleted successfully.`);
     res.json({ success: true, message: "Snippet deleted successfully." });
@@ -1496,7 +1983,8 @@ app.delete("/api/snippets/:id", async (req, res) => {
 });
 
 // --- Stock Alert Route ---
-app.post("/api/stocks/add-alert", async (req, res) => {
+app.post("/api/stocks/add-alert", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   const { ticker, targetPrice } = req.body;
   if (!ticker || !targetPrice) {
     return res
@@ -1505,12 +1993,16 @@ app.post("/api/stocks/add-alert", async (req, res) => {
   }
 
   try {
-    await db.collection("stock_alerts").add({
-      ticker: ticker.toUpperCase(),
-      targetPrice: Number(targetPrice),
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      status: "active",
-    });
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("stock_alerts")
+      .add({
+        ticker: ticker.toUpperCase(),
+        targetPrice: Number(targetPrice),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "active",
+      });
     res.json({
       success: true,
       message: `Alert set for ${ticker.toUpperCase()} at $${targetPrice}.`,
@@ -1521,14 +2013,20 @@ app.post("/api/stocks/add-alert", async (req, res) => {
   }
 });
 // ADD THIS NEW BLOCK OF CODE
-app.delete("/api/stocks/alert/:alertId", async (req, res) => {
+app.delete("/api/stocks/alert/:alertId", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   const { alertId } = req.params;
   if (!alertId) {
     return res.status(400).json({ error: "Alert ID is required." });
   }
 
   try {
-    await db.collection("stock_alerts").doc(alertId).delete();
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("stock_alerts")
+      .doc(alertId)
+      .delete();
     console.log(`Alert ${alertId} deleted successfully.`);
     res.json({ success: true, message: "Alert deleted successfully!" });
   } catch (error) {
@@ -1538,9 +2036,12 @@ app.delete("/api/stocks/alert/:alertId", async (req, res) => {
 });
 //  this for manual stock price updates:
 
-app.post("/api/stocks/refresh-prices", async (req, res) => {
+app.post("/api/stocks/refresh-prices", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   try {
     const alertsSnapshot = await db
+      .collection("users")
+      .doc(uid)
       .collection("stock_alerts")
       .where("status", "==", "triggered")
       .get();
@@ -1594,7 +2095,7 @@ app.post("/api/stocks/refresh-prices", async (req, res) => {
 });
 // END OF NEW BLOCK
 // --- AI Content Composer Route ---
-app.post("/api/ai/compose", async (req, res) => {
+app.post("/api/ai/compose", verifyAuthToken, async (req, res) => {
   const { pageContent, userRequest } = req.body;
   if (!pageContent || !userRequest) {
     return res
@@ -1616,9 +2117,10 @@ app.post("/api/ai/compose", async (req, res) => {
   }
 });
 
-app.post("/api/logout", async (req, res) => {
+app.post("/api/logout", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   try {
-    const userRef = db.collection("users").doc("main_user");
+    const userRef = db.collection("users").doc(uid);
     await userRef.update({
       google_tokens: admin.firestore.FieldValue.delete(),
       github_access_token: admin.firestore.FieldValue.delete(),
@@ -1628,35 +2130,90 @@ app.post("/api/logout", async (req, res) => {
     res.status(500).json({ error: "Logout failed on the server." });
   }
 });
-
-app.post("/api/summarize", async (req, res) => {
+app.post("/api/summarize", verifyAuthToken, async (req, res) => {
   try {
     const { text } = req.body;
     if (!text)
       return res.status(400).json({ error: "Text content is required." });
-    const prompt = `Summarize the following text:\n\n${text}`;
+
+    const prompt = `Summarize the following text:\n\n${text.substring(
+      0,
+      15000
+    )}`;
+
+    // Use the streaming model
     const result = await model.generateContent(prompt);
-    res.json({ summary: result.response.text() });
+    res.json({ success: true, summary: result.response.text() });
+    // Set headers for a streaming response
+    // res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    // res.setHeader("Transfer-Encoding", "chunked");
+
+    // Stream each chunk of text to the client as it's generated
+    // for await (const chunk of result.stream) {
+    //   res.write(chunk.text());
+    // }
+
+    // res.end(); // End the response when the stream is finished
   } catch (error) {
-    res.status(500).json({ error: "Failed to generate summary." });
+    console.error("Error in streaming summary:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: "Failed to generate summary." });
+    } else {
+      res.end();
+    }
   }
 });
+app.post("/api/gmail/draft", verifyAuthToken, async (req, res) => {
+  console.log("--> Received request at /api/gmail/draft");
 
-app.post("/api/gmail/draft", async (req, res) => {
+  const { uid } = req.user;
+  const { pageContent } = req.body;
+
   try {
-    const userDoc = await db.collection("users").doc("main_user").get();
-    if (!userDoc.exists || !userDoc.data().google_tokens) {
-      return res
-        .status(401)
-        .json({ error: "User is not authenticated with Google." });
-    }
-    googleOauth2Client.setCredentials(userDoc.data().google_tokens);
-    const gmail = google.gmail({ version: "v1", auth: googleOauth2Client });
-    const { pageContent } = req.body;
-    if (!pageContent)
-      return res.status(400).json({ error: "Page content is required." });
+    const userDoc = await db.collection("users").doc(uid).get();
+    const tokens = userDoc.data()?.google_tokens;
 
-    const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
+    if (!tokens) {
+      return res.status(401).json({
+        error: "Google account not connected. Please log in again.",
+        code: "NO_GOOGLE_TOKENS",
+      });
+    }
+
+    const requestOauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    requestOauth2Client.setCredentials(tokens);
+
+    if (requestOauth2Client.isTokenExpiring()) {
+      console.log("Google token is expiring, attempting to refresh...");
+      try {
+        const { credentials } = await requestOauth2Client.refreshAccessToken();
+        await db
+          .collection("users")
+          .doc(uid)
+          .update({
+            google_tokens: {
+              ...credentials,
+              refresh_token: credentials.refresh_token || tokens.refresh_token,
+            },
+            last_token_refresh: admin.firestore.FieldValue.serverTimestamp(),
+          });
+        requestOauth2Client.setCredentials(credentials);
+        console.log("✅ Google token refreshed successfully.");
+      } catch (refreshError) {
+        console.error("❌ Google token refresh failed:", refreshError);
+        return res.status(401).json({
+          error:
+            "Your Google session has expired. Please reconnect your Google account.",
+          code: "TOKEN_REFRESH_FAILED",
+        });
+      }
+    }
+
+    const gmail = google.gmail({ version: "v1", auth: requestOauth2Client });
+    const prompt = `Based on the following text, generate a concise email subject line and a professional email body. Format the output ONLY as a JSON object with "subject" and "body" keys. Text: "${pageContent.substring(
       0,
       4000
     )}"`;
@@ -1665,34 +2222,64 @@ app.post("/api/gmail/draft", async (req, res) => {
       .text()
       .replace(/```json\n|```/g, "")
       .trim();
-    const { subject, body } = JSON.parse(jsonString);
+
+    let subject, body;
+    try {
+      const jsonResponse = JSON.parse(jsonString);
+      subject = jsonResponse.subject;
+      body = jsonResponse.body;
+    } catch (parseError) {
+      console.warn(
+        "⚠️ AI did not return valid JSON. Attempting to extract manually."
+      );
+      subject =
+        jsonString.match(/Subject:\s*(.*)/)?.[1] || "Draft from AlturaAI";
+      body = jsonString;
+    }
 
     const email = `Content-Type: text/plain; charset="UTF-8"\nMIME-Version: 1.0\nto: \nsubject: ${subject}\n\n${body}`;
     const base64EncodedEmail = Buffer.from(email)
       .toString("base64")
       .replace(/\+/g, "-")
       .replace(/\//g, "_");
+
     await gmail.users.drafts.create({
       userId: "me",
       requestBody: { message: { raw: base64EncodedEmail } },
     });
+
+    console.log("Gmail draft created successfully for user:", uid);
     res.json({ success: true, message: "Draft created successfully!" });
   } catch (error) {
+    console.error("❌ Error creating Gmail draft:", error);
+    if (error.code === 401 || error.message?.includes("Invalid Credentials")) {
+      return res.status(401).json({
+        error:
+          "Your Google session has expired. Please reconnect your Google account.",
+      });
+    }
+    if (error.code === 403) {
+      return res.status(403).json({
+        error:
+          "Gmail access denied. Please check your Google account permissions.",
+      });
+    }
     res.status(500).json({ error: "Failed to create draft." });
   }
 });
-
-app.post("/api/github/pr/review", async (req, res) => {
+app.post("/api/github/pr/review", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   const { prUrl } = req.body;
+
   if (!prUrl) {
     return res.status(400).json({ error: "Pull Request URL is required." });
   }
   try {
     // --- Start: New GitHub App Authentication ---
-    const userDoc = await db.collection("users").doc("main_user").get();
+    const userDoc = await db.collection("users").doc(uid).get();
     const installationId = userDoc.data()?.github_installation_id;
     if (!installationId) {
-      throw new Error("GitHub App not installed for this user.");
+      return res.status(401).json({ error: "GitHub App not installed." });
     }
 
     const appJwt = generateJwt();
@@ -1738,7 +2325,8 @@ app.post("/api/github/pr/review", async (req, res) => {
   }
 });
 
-app.post("/api/notion/create", async (req, res) => {
+app.post("/api/notion/create", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
   const { pageContent } = req.body;
   if (!pageContent) {
     return res.status(400).json({ error: "Page content is required." });
@@ -1781,15 +2369,28 @@ app.post("/api/notion/create", async (req, res) => {
   }
 });
 
-app.post("/api/calendar/find-times", async (req, res) => {
+app.post("/api/calendar/find-times", verifyAuthToken, async (req, res) => {
   try {
-    const userDoc = await db.collection("users").doc("main_user").get();
+    // FIX: Get the user ID from the request object
+    const { uid } = req.user;
+
+    // The rest of your code is now correct because `uid` is defined.
+    const userDoc = await db.collection("users").doc(uid).get();
+
     if (!userDoc.exists || !userDoc.data().google_tokens) {
       return res
         .status(401)
         .json({ error: "User is not authenticated with Google." });
     }
+
+    const googleOauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      "http://localhost:3001/api/auth/google/callback"
+    );
+
     googleOauth2Client.setCredentials(userDoc.data().google_tokens);
+
     const calendar = google.calendar({
       version: "v3",
       auth: googleOauth2Client,
@@ -1815,41 +2416,52 @@ app.post("/api/calendar/find-times", async (req, res) => {
   }
 });
 
-app.post("/api/research/start", async (req, res) => {
+app.post("/api/research/start", verifyAuthToken, async (req, res) => {
   const { topic } = req.body;
+  const { uid } = req.user; // Get the user ID from the token
+
   if (!topic) {
     return res.status(400).json({ error: "Research topic is required." });
   }
 
   try {
-    const taskRef = await db.collection("research_tasks").add({
+    // Correctly reference the user's nested collection
+    const userResearchCollectionRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("research_tasks");
+
+    const taskRef = await userResearchCollectionRef.add({
       topic: topic,
       status: "pending",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    console.log(`New research task created with ID: ${taskRef.id}`);
+    console.log(
+      `New research task created with ID: ${taskRef.id} for user: ${uid}`
+    );
     res.json({ success: true, message: `Research on "${topic}" has started.` });
 
+    // The AI worker function also needs the correct collection reference
     (async () => {
       try {
         console.log(`Performing AI research for task ${taskRef.id}...`);
         const prompt = `Please conduct thorough research on the following topic and provide a detailed, well-structured summary. Include key points, relevant data, and a concluding paragraph. Topic: "${topic}"`;
-
         const result = await model.generateContent(prompt);
         const researchSummary = result.response.text();
 
-        await taskRef.update({
+        // Update the task in the correct user-specific collection
+        await userResearchCollectionRef.doc(taskRef.id).update({
           status: "completed",
           result: researchSummary,
           completedAt: admin.firestore.FieldValue.serverTimestamp(),
         });
         console.log(
-          `Research task ${taskRef.id} has been completed with real data.`
+          `Research task ${taskRef.id} has been completed for user: ${uid}.`
         );
       } catch (aiError) {
         console.error(`AI research failed for task ${taskRef.id}:`, aiError);
-        await taskRef.update({
+        await userResearchCollectionRef.doc(taskRef.id).update({
           status: "failed",
           error: "The AI failed to generate a response.",
           completedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -1861,22 +2473,56 @@ app.post("/api/research/start", async (req, res) => {
     res.status(500).json({ error: "Failed to start research task." });
   }
 });
+// In server.js, add this new route
+app.post("/api/ai/momentum", verifyAuthToken, async (req, res) => {
+  const { history } = req.body;
+  if (!history || history.length === 0) {
+    return res.status(400).json({ error: "User history is required." });
+  }
 
-app.delete("/api/research/task/:taskId", async (req, res) => {
   try {
-    const { taskId } = req.params;
+    const prompt = `You are a professional AI productivity coach. Based on the user's recent browsing history, suggest a single, specific, and actionable "next step" to help them build momentum. Keep it under 50 words.
 
-    // Check if the research task exists first
-    const taskDoc = await db.collection("research_tasks").doc(taskId).get();
+        Recent History:
+        ${JSON.stringify(history, null, 2)}
+        
+        Next Action:`;
+
+    const result = await model.generateContent(prompt);
+    const suggestion = result.response.text();
+
+    res.json({ success: true, message: suggestion });
+  } catch (error) {
+    console.error("Error generating momentum suggestion:", error);
+    res.status(500).json({ error: "Failed to generate suggestion." });
+  }
+});
+// You must also update your DELETE and DOWNLOAD routes to use this new path:
+// Replace this: `db.collection("research_tasks").doc(taskId).delete()`
+// With this: `db.collection("users").doc(uid).collection("research_tasks").doc(taskId).delete()`
+app.delete("/api/research/task/:taskId", verifyAuthToken, async (req, res) => {
+  const { uid } = req.user;
+  const { taskId } = req.params;
+  try {
+    // FIX: Check and delete directly from the user's collection
+    const taskRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("research_tasks")
+      .doc(taskId);
+    const taskDoc = await taskRef.get();
 
     if (!taskDoc.exists) {
-      return res.status(404).json({ error: "Research task not found." });
+      return res
+        .status(404)
+        .json({ error: "Research task not found for this user." });
     }
 
-    // Delete from Firestore
-    await db.collection("research_tasks").doc(taskId).delete();
+    await taskRef.delete();
 
-    console.log(`Research task ${taskId} deleted successfully.`);
+    console.log(
+      `Research task ${taskId} deleted successfully for user ${uid}.`
+    );
     res.json({
       success: true,
       message: "Research task deleted successfully.",
@@ -1889,7 +2535,7 @@ app.delete("/api/research/task/:taskId", async (req, res) => {
 });
 // In server.js
 
-app.post("/api/debug/webpage", async (req, res) => {
+app.post("/api/debug/webpage", verifyAuthToken, async (req, res) => {
   const { consoleErrors, pageHtml } = req.body;
 
   if (!pageHtml || !consoleErrors) {
@@ -1935,209 +2581,242 @@ app.post("/api/debug/webpage", async (req, res) => {
       .json({ error: "Failed to generate debug analysis from AI." });
   }
 });
-app.get("/api/research/task/:taskId/download", async (req, res) => {
-  try {
-    const { taskId } = req.params;
+app.get(
+  "/api/research/task/:taskId/download",
+  verifyAuthToken,
+  async (req, res) => {
+    const { uid } = req.user;
+    try {
+      const { taskId } = req.params;
 
-    // Fetch the research task from Firestore
-    const taskDoc = await db.collection("research_tasks").doc(taskId).get();
-
-    if (!taskDoc.exists) {
-      return res.status(404).json({ error: "Research task not found." });
-    }
-
-    const taskData = taskDoc.data();
-
-    if (taskData.status !== "completed" || !taskData.result) {
-      return res
-        .status(400)
-        .json({ error: "Research task is not completed or has no content." });
-    }
-
-    // Create a new PDF document
-    const doc = new PDFDocument({
-      margin: 50,
-      size: "A4",
-    });
-
-    // Set response headers for PDF download
-    const filename = `research-${taskData.topic
-      .replace(/[^a-zA-Z0-9]/g, "-")
-      .toLowerCase()}-${taskId}.pdf`;
-    res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-
-    // Handle errors
-    doc.on("error", (err) => {
-      console.error("PDF document error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Failed to generate PDF." });
+      // Fetch the research task from Firestore
+      const taskDoc = await db
+        .collection("users")
+        .doc(uid)
+        .collection("research_tasks")
+        .doc(taskId)
+        .get();
+      if (!taskDoc.exists) {
+        return res.status(404).json({ error: "Research task not found." });
       }
-    });
 
-    // Pipe the PDF to the response
-    doc.pipe(res);
+      const taskData = taskDoc.data();
 
-    // Add title
-    doc
-      .fontSize(20)
-      .font("Helvetica-Bold")
-      .text("Research Report", { align: "center" })
-      .moveDown();
+      if (taskData.status !== "completed" || !taskData.result) {
+        return res
+          .status(400)
+          .json({ error: "Research task is not completed or has no content." });
+      }
 
-    // Add topic
-    doc
-      .fontSize(16)
-      .font("Helvetica-Bold")
-      .text("Topic:", { continued: true })
-      .font("Helvetica")
-      .text(` ${taskData.topic}`)
-      .moveDown();
+      // Create a new PDF document
+      const doc = new PDFDocument({
+        margin: 50,
+        size: "A4",
+      });
 
-    // Add creation date
-    const createdDate = taskData.createdAt?.toDate
-      ? taskData.createdAt.toDate().toLocaleDateString()
-      : new Date().toLocaleDateString();
+      // Set response headers for PDF download
+      const filename = `research-${taskData.topic
+        .replace(/[^a-zA-Z0-9]/g, "-")
+        .toLowerCase()}-${taskId}.pdf`;
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${filename}"`
+      );
 
-    doc
-      .fontSize(12)
-      .font("Helvetica-Bold")
-      .text("Created:", { continued: true })
-      .font("Helvetica")
-      .text(` ${createdDate}`)
-      .moveDown();
+      // Handle errors
+      doc.on("error", (err) => {
+        console.error("PDF document error:", err);
+        if (!res.headersSent) {
+          res.status(500).json({ error: "Failed to generate PDF." });
+        }
+      });
 
-    // Add completion date if available
-    if (taskData.completedAt) {
-      const completedDate = taskData.completedAt?.toDate
-        ? taskData.completedAt.toDate().toLocaleDateString()
+      // Pipe the PDF to the response
+      doc.pipe(res);
+
+      // Add title
+      doc
+        .fontSize(20)
+        .font("Helvetica-Bold")
+        .text("Research Report", { align: "center" })
+        .moveDown();
+
+      // Add topic
+      doc
+        .fontSize(16)
+        .font("Helvetica-Bold")
+        .text("Topic:", { continued: true })
+        .font("Helvetica")
+        .text(` ${taskData.topic}`)
+        .moveDown();
+
+      // Add creation date
+      const createdDate = taskData.createdAt?.toDate
+        ? taskData.createdAt.toDate().toLocaleDateString()
         : new Date().toLocaleDateString();
 
       doc
+        .fontSize(12)
         .font("Helvetica-Bold")
-        .text("Completed:", { continued: true })
+        .text("Created:", { continued: true })
         .font("Helvetica")
-        .text(` ${completedDate}`)
+        .text(` ${createdDate}`)
         .moveDown();
-    }
 
-    // Add separator line
-    doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke().moveDown();
-
-    // Process the content and remove markdown formatting for PDF
-    let content = taskData.result;
-
-    // Simple markdown to plain text conversion
-    content = content
-      .replace(/#{1,6}\s+/g, "") // Remove header markers
-      .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold markers
-      .replace(/\*(.*?)\*/g, "$1") // Remove italic markers
-      .replace(/`(.*?)`/g, "$1") // Remove code markers
-      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // Convert links to just text
-      .replace(/^\s*[-*+]\s+/gm, "• ") // Convert list markers to bullets
-      .replace(/^\s*\d+\.\s+/gm, "• "); // Convert numbered lists to bullets
-
-    // Split content into paragraphs
-    const paragraphs = content.split(/\n\s*\n/);
-
-    // Add content with proper formatting
-    doc.fontSize(11).font("Helvetica");
-
-    for (const paragraph of paragraphs) {
-      if (paragraph.trim()) {
-        // Check if we need a new page
-        if (doc.y > 700) {
-          doc.addPage();
-        }
+      // Add completion date if available
+      if (taskData.completedAt) {
+        const completedDate = taskData.completedAt?.toDate
+          ? taskData.completedAt.toDate().toLocaleDateString()
+          : new Date().toLocaleDateString();
 
         doc
-          .text(paragraph.trim(), {
-            align: "justify",
-            lineGap: 2,
-          })
+          .font("Helvetica-Bold")
+          .text("Completed:", { continued: true })
+          .font("Helvetica")
+          .text(` ${completedDate}`)
           .moveDown();
       }
-    }
 
-    // Add footer to each page after content is complete
-    const range = doc.bufferedPageRange();
-    const pageCount = range.count;
+      // Add separator line
+      doc.moveTo(50, doc.y).lineTo(550, doc.y).stroke().moveDown();
 
-    // Only add footers if there are pages
-    if (pageCount > 0) {
-      for (let i = 1; i <= pageCount; i++) {
-        doc.switchToPage(i - 1); // PDFKit uses 0-based indexing internally
-        doc
-          .fontSize(9)
-          .font("Helvetica")
-          .text(`Generated by AlturaAI - Page ${i} of ${pageCount}`, 50, 750, {
-            align: "center",
-          });
+      // Process the content and remove markdown formatting for PDF
+      let content = taskData.result;
+
+      // Simple markdown to plain text conversion
+      content = content
+        .replace(/#{1,6}\s+/g, "") // Remove header markers
+        .replace(/\*\*(.*?)\*\*/g, "$1") // Remove bold markers
+        .replace(/\*(.*?)\*/g, "$1") // Remove italic markers
+        .replace(/`(.*?)`/g, "$1") // Remove code markers
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1") // Convert links to just text
+        .replace(/^\s*[-*+]\s+/gm, "• ") // Convert list markers to bullets
+        .replace(/^\s*\d+\.\s+/gm, "• "); // Convert numbered lists to bullets
+
+      // Split content into paragraphs
+      const paragraphs = content.split(/\n\s*\n/);
+
+      // Add content with proper formatting
+      doc.fontSize(11).font("Helvetica");
+
+      for (const paragraph of paragraphs) {
+        if (paragraph.trim()) {
+          // Check if we need a new page
+          if (doc.y > 700) {
+            doc.addPage();
+          }
+
+          doc
+            .text(paragraph.trim(), {
+              align: "justify",
+              lineGap: 2,
+            })
+            .moveDown();
+        }
+      }
+
+      // Add footer to each page after content is complete
+      const range = doc.bufferedPageRange();
+      const pageCount = range.count;
+
+      // Only add footers if there are pages
+      if (pageCount > 0) {
+        for (let i = 1; i <= pageCount; i++) {
+          doc.switchToPage(i); // PDFKit uses 0-based indexing internally
+          doc
+            .fontSize(9)
+            .font("Helvetica")
+            .text(
+              `Generated by AlturaAI - Page ${i} of ${pageCount}`,
+              50,
+              750,
+              {
+                align: "center",
+              }
+            );
+        }
+      }
+
+      // Finalize the PDF and end the stream
+      doc.end();
+
+      console.log(`PDF generated for research task: ${taskId}`);
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: "Failed to generate PDF." });
       }
     }
-
-    // Finalize the PDF and end the stream
-    doc.end();
-
-    console.log(`PDF generated for research task: ${taskId}`);
-  } catch (error) {
-    console.error("Error generating PDF:", error);
-    if (!res.headersSent) {
-      res.status(500).json({ error: "Failed to generate PDF." });
-    }
   }
-});
+);
 // --- Background Task for Stock Monitoring ---
 cron.schedule("*/5 * * * *", async () => {
-  console.log("--- Running Stock Price Check ---");
+  console.log("--- Running Stock Price Check for ALL USERS ---");
   try {
-    const alertsSnapshot = await db
-      .collection("stock_alerts")
-      .where("status", "==", "active")
-      .get();
+    // ✅ 1. Get all users from the 'users' collection
+    const usersSnapshot = await db.collection("users").get();
 
-    if (alertsSnapshot.empty) {
+    if (usersSnapshot.empty) {
       return;
     }
 
-    for (const doc of alertsSnapshot.docs) {
-      const alert = doc.data();
-      try {
-        const response = await fetch(
-          `https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${process.env.FINNHUB_API_KEY}`
-        );
-        const data = await response.json();
-        const currentPrice = data.c;
+    // ✅ 2. Loop through each user
+    for (const userDoc of usersSnapshot.docs) {
+      const userId = userDoc.id;
 
-        if (currentPrice) {
-          console.log(
-            `Checking ${alert.ticker}: Current Price = $${currentPrice}, Target = $${alert.targetPrice}`
+      // ✅ 3. Query the user's PERSONAL stock_alerts collection
+      const alertsSnapshot = await db
+        .collection("users")
+        .doc(userId)
+        .collection("stock_alerts")
+        .where("status", "==", "active")
+        .get();
+
+      if (alertsSnapshot.empty) {
+        continue; // This user has no active alerts, move to the next user
+      }
+
+      console.log(`Checking ${alertsSnapshot.size} alerts for user: ${userId}`);
+      for (const alertDoc of alertsSnapshot.docs) {
+        const alert = alertDoc.data();
+        try {
+          const response = await fetch(
+            `https://finnhub.io/api/v1/quote?symbol=${alert.ticker}&token=${process.env.FINNHUB_API_KEY}`
           );
+          const data = await response.json();
+          const currentPrice = data.c;
 
-          if (currentPrice >= alert.targetPrice) {
-            await db.collection("notifications").add({
-              type: "stock",
-              message: `📈 STOCK ALERT: ${alert.ticker} has reached your target of $${alert.targetPrice}! Current price is $${currentPrice}.`,
-              timestamp: admin.firestore.FieldValue.serverTimestamp(),
-              read: false,
-            });
-
-            // UPDATE: Save the current price when triggering the alert
-            await db.collection("stock_alerts").doc(doc.id).update({
-              status: "triggered",
-              currentPrice: currentPrice, // Add this line
-              triggeredAt: admin.firestore.FieldValue.serverTimestamp(), // Optional: add timestamp
-            });
+          if (currentPrice && currentPrice >= alert.targetPrice) {
             console.log(
-              `!!! Stock alert triggered for ${alert.ticker} at $${currentPrice} !!!`
+              `!!! Stock alert triggered for user ${userId}, ticker ${alert.ticker} !!!`
             );
+
+            // ✅ 4. Add notification to the correct user's feed
+            await db
+              .collection("users")
+              .doc(userId)
+              .collection("notifications")
+              .add({
+                type: "stock",
+                message: `📈 STOCK ALERT: ${alert.ticker} has reached your target of $${alert.targetPrice}! Current price is $${currentPrice}.`,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                read: false,
+              });
+
+            // ✅ 5. Update the alert in the user's collection
+            await alertDoc.ref.update({
+              status: "triggered",
+              currentPrice: currentPrice,
+              triggeredAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
           }
+        } catch (error) {
+          console.error(
+            `Failed to check stock price for ${alert.ticker} for user ${userId}:`,
+            error
+          );
         }
-      } catch (error) {
-        console.error(
-          `Failed to check stock price for ${alert.ticker}:`,
-          error
-        );
       }
     }
   } catch (error) {
@@ -2147,66 +2826,86 @@ cron.schedule("*/5 * * * *", async () => {
 
 // --- Background Task for Parcel Tracking ---
 cron.schedule("*/10 * * * *", async () => {
-  console.log("--- Running Parcel Tracking Check ---");
+  console.log("--- Running Parcel Tracking Check for ALL USERS ---");
   try {
-    const ordersSnapshot = await db
-      .collection("orders")
-      .where("aftershipTrackingId", "!=", null)
-      .get();
+    // ✅ 1. Get all users
+    const usersSnapshot = await db.collection("users").get();
 
-    if (ordersSnapshot.empty) {
+    if (usersSnapshot.empty) {
       return;
     }
 
-    for (const doc of ordersSnapshot.docs) {
-      const order = doc.data();
+    // ✅ 2. Loop through each user
+    for (const userDoc of usersSnapshot.docs) {
+      const userId = userDoc.id;
 
-      if (order.status === "Delivered") {
-        continue;
+      // ✅ 3. Query the user's PERSONAL orders collection
+      const ordersSnapshot = await db
+        .collection("users")
+        .doc(userId)
+        .collection("orders")
+        .where("aftershipTrackingId", "!=", null)
+        .get();
+
+      if (ordersSnapshot.empty) {
+        continue; // No tracked orders for this user, move on
       }
 
-      try {
-        const response = await fetch(
-          `https://api.aftership.com/v4/trackings/${order.aftershipTrackingId}`,
-          {
-            headers: { "as-api-key": process.env.AFTERSHIP_API_KEY },
-          }
-        );
-        const data = await response.json();
+      console.log(
+        `Checking ${ordersSnapshot.size} tracked orders for user: ${userId}`
+      );
+      for (const orderDoc of ordersSnapshot.docs) {
+        const order = orderDoc.data();
 
-        if (data && data.data && data.data.tracking) {
-          const newStatus = data.data.tracking.tag;
-
-          console.log(
-            `Checking order ${doc.id}: Current Status = ${order.status}, New Status = ${newStatus}`
-          );
-
-          if (newStatus !== order.status) {
-            await db.collection("notifications").add({
-              type: "order",
-              message: `📦 Order Update: Your order for "${
-                order.itemName || "item"
-              }" is now ${newStatus}.`,
-              timestamp: admin.firestore.FieldValue.serverTimestamp(),
-              read: false,
-            });
-
-            await db
-              .collection("orders")
-              .doc(doc.id)
-              .update({ status: newStatus });
-            console.log(`!!! Order status updated for ${doc.id} !!!`);
-          }
+        if (order.status === "Delivered") {
+          continue;
         }
-      } catch (error) {
-        console.error(`Failed to check tracking for order ${doc.id}:`, error);
+
+        try {
+          const response = await fetch(
+            `https://api.aftership.com/v4/trackings/${order.aftershipTrackingId}`,
+            { headers: { "as-api-key": process.env.AFTERSHIP_API_KEY } }
+          );
+          const data = await response.json();
+
+          if (data && data.data && data.data.tracking) {
+            const newStatus = data.data.tracking.tag;
+
+            if (newStatus !== order.status) {
+              console.log(
+                `!!! Order status updated for user ${userId}, order ${orderDoc.id} !!!`
+              );
+
+              // ✅ 4. Add notification to the correct user's feed
+              await db
+                .collection("users")
+                .doc(userId)
+                .collection("notifications")
+                .add({
+                  type: "order",
+                  message: `📦 Order Update: Your order for "${
+                    order.itemName || "item"
+                  }" is now ${newStatus}.`,
+                  timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                  read: false,
+                });
+
+              // ✅ 5. Update the order in the user's collection
+              await orderDoc.ref.update({ status: newStatus });
+            }
+          }
+        } catch (error) {
+          console.error(
+            `Failed to check tracking for order ${orderDoc.id} for user ${userId}:`,
+            error
+          );
+        }
       }
     }
   } catch (error) {
     console.error("Error in Parcel Tracking cron job:", error.message);
   }
 });
-
 // --- Start the Server ---
 app.listen(PORT, () => {
   console.log(`Server is running on http://localhost:${PORT}`);
