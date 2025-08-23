@@ -45,7 +45,7 @@ const corsOptions = {
   credentials: true,
 };
 app.use(cors(corsOptions));
-app.use(express.json({ limit: "5mb" }));
+
 app.use(express.static("public"));
 // Helper function to create a JWT for app authentication
 function generateJwt() {
@@ -463,7 +463,7 @@ app.post(
   }
 );
 // This line should come after your route definitions
-
+app.use(express.json({ limit: "5mb" }));
 // NEW: Callback that GitHub hits after a user installs the app
 app.get("/api/github/app/callback", async (req, res) => {
   const { installation_id, setup_action } = req.query;

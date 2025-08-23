@@ -2986,7 +2986,7 @@ function App() {
                         : "Notion Doc"}
                     </span>
                   </button>
-                  <button
+                  {/* <button
                     className="btn btn-tertiary"
                     onClick={handleFindMeetingTimes}
                     disabled={isFindingTimes || !isGoogleLoggedIn}
@@ -2995,7 +2995,7 @@ function App() {
                     <span>
                       {isFindingTimes ? "Finding..." : "Find Meeting Times"}
                     </span>
-                  </button>
+                  </button> */}
                 </div>
                 {summary && (
                   <>
@@ -3123,16 +3123,17 @@ function App() {
                   </div>
                 )}
               </div>
+              {/* //momentum builder */}
               <div className="card">
                 <h3 className="card-title">
                   <Zap className="title-icon text-yellow" /> Momentum Builder
                 </h3>
                 <div className="card-content">
                   <div className="momentum-score">
-                    {/* <div className="score-ring" style={{ "--score": "85%" }}>
+                    <div className="score-ring" style={{ "--score": "85%" }}>
                       <span className="score-text">85</span>
-                    </div> */}
-                    {/* <p className="score-label">Active Momentum</p> */}
+                    </div>
+                    <p className="score-label">Active Momentum</p>
                   </div>
                   <div className="next-step-section">
                     <h4 className="list-subtitle">Next Suggested Action</h4>

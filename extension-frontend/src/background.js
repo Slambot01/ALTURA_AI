@@ -833,13 +833,97 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       let pageContent = null;
       let activeTab = null;
 
+      // Handle debug_page separately since it needs special handling
+      if (request.action === "debug_page") {
+        const debugTabs = await chrome.tabs.query({
+          active: true,
+          currentWindow: true,
+        });
+
+        if (!debugTabs || debugTabs.length === 0) {
+          throw new Error("No active tab found for debugging.");
+        }
+
+        const debugTab = debugTabs[0];
+
+        // Ensure content script is injected
+        await ensureContentScript(debugTab.id, debugTab.url);
+
+        // Get debug info from content script
+        const debugResponse = await sendMessageToContentScript(debugTab.id, {
+          action: "debug_page",
+        });
+
+        if (!debugResponse?.success) {
+          throw new Error(debugResponse?.error || "Failed to get debug info.");
+        }
+
+        endpoint = "/api/debug/webpage";
+        body = {
+          pageHtml: debugResponse.pageHtml,
+          consoleErrors: debugResponse.consoleErrors,
+          url: debugResponse.url,
+          title: debugResponse.title,
+          userAgent: debugResponse.userAgent,
+          viewport: debugResponse.viewport,
+        };
+      }
+      // Handle notion auth separately
+      else if (request.action === "notion_auth_start") {
+        const notionCallbackUrl =
+          "http://localhost:3001/auth-success.html?provider=notion";
+
+        const listener = (tabId, changeInfo, tab) => {
+          if (
+            tab.url === notionCallbackUrl &&
+            changeInfo.status === "complete"
+          ) {
+            console.log(
+              "Notion callback page loaded. Re-checking auth status..."
+            );
+            checkAuthStatus();
+            chrome.tabs.onUpdated.removeListener(listener);
+          }
+        };
+
+        chrome.tabs.onUpdated.addListener(listener);
+        sendResponse({ success: true });
+        return true;
+      }
+      // Handle get_next_action separately
+      else if (request.action === "get_next_action") {
+        try {
+          const historyItems = await chrome.history.search({
+            text: "",
+            maxResults: 5,
+            startTime: Date.now() - 3600000,
+          });
+          const history = historyItems.map((item) => ({
+            title: item.title,
+            url: item.url,
+          }));
+
+          const response = await makeAuthenticatedRequest("/api/ai/momentum", {
+            method: "POST",
+            body: JSON.stringify({ history }),
+            headers: { "Content-Type": "application/json" },
+          });
+
+          const data = await response.json();
+          sendResponse(data);
+        } catch (err) {
+          sendResponse({
+            error: err.message || "An unexpected error occurred.",
+          });
+        }
+        return true;
+      }
       // Handle actions that require page content
-      if (
+      else if (
         [
           "summarize_page",
           "draft_email",
           "create_notion_doc",
-          "debug_page",
           "compose_content",
         ].includes(request.action)
       ) {
@@ -849,6 +933,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
         activeTab = tabs[0];
         if (!activeTab) throw new Error("No active tab found.");
+
+        // Ensure content script is injected for these actions too
+        await ensureContentScript(activeTab.id, activeTab.url);
 
         const pageResponse = await new Promise((resolve, reject) => {
           chrome.tabs.sendMessage(
@@ -868,108 +955,49 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             }
           );
         });
-        if (!pageResponse?.success)
+
+        if (!pageResponse?.success) {
           throw new Error(pageResponse?.error || "Failed to get page content.");
+        }
+
         pageContent = pageResponse.content;
-      }
-      if (request.action === "notion_auth_start") {
-        const notionCallbackUrl =
-          "http://localhost:3001/auth-success.html?provider=notion";
 
-        // Listen for the tab to close. This is a robust way to handle the callback.
-        const listener = (tabId, changeInfo, tab) => {
-          if (
-            tab.url === notionCallbackUrl &&
-            changeInfo.status === "complete"
-          ) {
-            console.log(
-              "Notion callback page loaded. Re-checking auth status..."
-            );
-            checkAuthStatus();
-            chrome.tabs.onUpdated.removeListener(listener);
-          }
-        };
-
-        chrome.tabs.onUpdated.addListener(listener);
-        return true;
-      }
-      switch (request.action) {
-        case "summarize_page":
-          endpoint = "/api/summarize";
-          body = { text: pageContent };
-          break;
-        case "draft_email":
-          endpoint = "/api/gmail/draft";
-          body = { pageContent };
-          break;
-        case "create_notion_doc":
-          endpoint = "/api/notion/create";
-          body = { pageContent };
-          break;
-        case "debug_page":
-          endpoint = "/api/debug/webpage";
-          body = { pageHtml: pageContent, consoleErrors: [] }; // consoleErrors handled in content.js
-          break;
-        // ------------------------------------------
-        case "get_next_action":
-          try {
-            // Get the user's last 5 visited sites from Chrome history
-            const historyItems = await chrome.history.search({
-              text: "",
-              maxResults: 5,
-              startTime: Date.now() - 3600000, // Last 1 hour
+        // Set endpoint and body for each action
+        switch (request.action) {
+          case "summarize_page":
+            endpoint = "/api/summarize";
+            body = { text: pageContent };
+            break;
+          case "draft_email":
+            endpoint = "/api/gmail/draft";
+            body = { pageContent };
+            break;
+          case "create_notion_doc":
+            endpoint = "/api/notion/create";
+            body = { pageContent };
+            break;
+          case "compose_content":
+            if (!request.userRequest || request.userRequest.trim() === "") {
+              throw new Error(
+                "User request is required for compose_content action."
+              );
+            }
+            endpoint = "/api/ai/compose";
+            body = {
+              pageContent,
+              userRequest: request.userRequest.trim(),
+            };
+            console.log("📝 Compose content request:", {
+              pageContentLength: pageContent?.length || 0,
+              userRequest: request.userRequest,
             });
-            const history = historyItems.map((item) => ({
-              title: item.title,
-              url: item.url,
-            }));
-
-            const response = await makeAuthenticatedRequest(
-              "/api/ai/momentum",
-              {
-                method: "POST",
-                body: JSON.stringify({ history }),
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-
-            const data = await response.json();
-            sendResponse(data);
-          } catch (err) {
-            sendResponse({
-              error: err.message || "An unexpected error occurred.",
-            });
-          }
-          return true; // Keep the message port open
-
-        // --------------------------------------
-        case "compose_content":
-          // Add validation for required fields
-          if (!pageContent) {
-            throw new Error(
-              "Page content is required for compose_content action."
-            );
-          }
-          if (!request.userRequest || request.userRequest.trim() === "") {
-            throw new Error(
-              "User request is required for compose_content action."
-            );
-          }
-
-          endpoint = "/api/ai/compose";
-          body = {
-            pageContent,
-            userRequest: request.userRequest.trim(),
-          };
-          console.log("📝 Compose content request:", {
-            pageContentLength: pageContent?.length || 0,
-            userRequest: request.userRequest,
-          });
-          break;
-        default:
-          throw new Error(`Unrecognized action: ${request.action}`);
+            break;
+        }
+      } else {
+        throw new Error(`Unrecognized action: ${request.action}`);
       }
 
+      // Make API request if endpoint is set
       if (endpoint) {
         console.log(
           "🌐 Making API request to:",
@@ -986,8 +1014,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         responseData = await response.json();
 
         console.log("✅ API response received:", responseData);
-      } else {
-        throw new Error("Invalid action provided.");
       }
 
       sendResponse(responseData);
@@ -1000,7 +1026,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   handleMessage();
   return true;
 });
-
 // Core listeners
 chrome.runtime.onInstalled.addListener(async () => {
   console.log("🚀 AlturaAI extension installed/updated. Initializing...");

@@ -1471,7 +1471,7 @@ input:checked + .slider:before {
   height: 100px;
   border-radius: 50%;
   background: radial-gradient(closest-side, #333 79%, transparent 80%),
-    conic-gradient(#7497a1 var(--score), #444 0);
+    conic-gradient(#79a6b3 var(--score), #444 0);
   display: flex;
   justify-content: center;
   align-items: center;
