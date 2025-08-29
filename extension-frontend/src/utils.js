@@ -11,7 +11,7 @@ const authedFetch = async (url, options = {}, token) => {
   };
 
   try {
-    const response = await fetch(`http://localhost:3001${url}`, {
+    const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}${url}`, {
       ...options,
       headers,
     });

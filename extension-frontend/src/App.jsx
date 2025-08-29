@@ -294,7 +294,7 @@
 //     const authedFetchNotifications = async () => {
 //       setLoading(true);
 //       try {
-//         const response = await authedFetch("http://localhost:3001/api/notifications");
+//         const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/notifications");
 //         if (!response.ok) throw new Error("Failed to authedFetch notifications.");
 //         const data = await response.json();
 //         const githubNotifications = data.filter(
@@ -551,7 +551,7 @@
 
 //   const handleLogout = async () => {
 //     try {
-//       const response = await authedFetch("http://localhost:3001/api/logout", {
+//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/logout", {
 //         method: "POST",
 //         headers: { "Content-Type": "application/json" },
 //       });
@@ -579,7 +579,7 @@
 //       "Content-Type": "application/json",
 //       Authorization: `Bearer ${idToken}`,
 //     };
-//     const response = await authedFetch(`http://localhost:3001${url}`, {
+//     const response = await authedFetch(` import.meta.env.VITE_BACKEND_URL${url}`, {
 //       ...options,
 //       headers,
 //     });
@@ -639,7 +639,7 @@
 //     setIsResearching(true);
 //     resetActionStates();
 //     try {
-//       const response = await authedFetch("http://localhost:3001/api/research/start", {
+//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/research/start", {
 //         method: "POST",
 //         headers: { "Content-Type": "application/json" },
 //         body: JSON.stringify({ topic: researchTopic }),
@@ -663,7 +663,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         `http://localhost:3001/api/research/task/${taskId}/download`
+//         ` import.meta.env.VITE_BACKEND_URL/api/research/task/${taskId}/download`
 //       );
 
 //       if (!response.ok) {
@@ -700,7 +700,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         `http://localhost:3001/api/research/task/${taskId}`,
+//         ` import.meta.env.VITE_BACKEND_URL/api/research/task/${taskId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -743,7 +743,7 @@
 //     resetActionStates();
 //     try {
 //       const response = await authedFetch(
-//         "http://localhost:3001/api/orders/add-tracking",
+//         " import.meta.env.VITE_BACKEND_URL/api/orders/add-tracking",
 //         {
 //           method: "POST",
 //           headers: { "Content-Type": "application/json" },
@@ -772,7 +772,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         `http://localhost:3001/api/orders/${orderId}`,
+//         ` import.meta.env.VITE_BACKEND_URL/api/orders/${orderId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -795,7 +795,7 @@
 //   };
 //   const handleConnectNotion = async () => {
 //     try {
-//       const response = await authedFetch("http://localhost:3001/api/auth/notion");
+//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/auth/notion");
 //       const data = await response.json();
 //       if (data.url) {
 //         chrome.tabs.create({ url: data.url });
@@ -817,7 +817,7 @@
 // //     Authorization: `Bearer ${token}`,
 // //   };
 
-// //   const response = await authedFetch(`http://localhost:3001${url}`, {
+// //   const response = await authedFetch(` import.meta.env.VITE_BACKEND_URL${url}`, {
 // //     ...options,
 // //     headers,
 // //   });
@@ -826,7 +826,7 @@
 
 //   const handleInstallGitHubApp = async () => {
 //     try {
-//       const response = await authedFetch("http://localhost:3001/api/github/install");
+//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/github/install");
 //       const data = await response.json();
 //       if (data.url) {
 //         chrome.tabs.create({ url: data.url });
@@ -850,7 +850,7 @@
 //     resetActionStates();
 //     try {
 //       const response = await authedFetch(
-//         "http://localhost:3001/api/stocks/add-alert",
+//         " import.meta.env.VITE_BACKEND_URL/api/stocks/add-alert",
 //         {
 //           method: "POST",
 //           headers: { "Content-Type": "application/json" },
@@ -879,7 +879,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         `http://localhost:3001/api/stocks/alert/${alertId}`,
+//         ` import.meta.env.VITE_BACKEND_URL/api/stocks/alert/${alertId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -900,7 +900,7 @@
 //     setDeletingNotificationId(notificationId);
 //     try {
 //       const response = await authedFetch(
-//         `http://localhost:3001/api/notifications/${notificationId}`,
+//         ` import.meta.env.VITE_BACKEND_URL/api/notifications/${notificationId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -928,7 +928,7 @@
 //     const currentAnalysis = summary; // Get the current analysis text
 
 //     try {
-//       const response = await authedFetch("http://localhost:3001/api/debug/followup", {
+//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/debug/followup", {
 //         method: "POST",
 //         headers: { "Content-Type": "application/json" },
 //         body: JSON.stringify({
@@ -1662,6 +1662,7 @@ import {
   getAuth,
   onIdTokenChanged,
   GoogleAuthProvider,
+  signInWithPopup,
   signOut,
   signInWithCredential,
 } from "firebase/auth";
@@ -1876,7 +1877,7 @@ function App() {
         Authorization: `Bearer ${idToken}`,
       };
 
-      const response = await fetch(`http://localhost:3001${url}`, {
+      const response = await fetch(` import.meta.env.VITE_BACKEND_URL${url}`, {
         ...options,
         headers,
       });
@@ -1959,7 +1960,7 @@ function App() {
 
         try {
           const response = await fetch(
-            "http://localhost:3001/api/auth/status",
+            " import.meta.env.VITE_BACKEND_URL/api/auth/status",
             {
               headers: {
                 Authorization: `Bearer ${token}`,
@@ -2136,23 +2137,34 @@ function App() {
   };
 
   // --- HANDLER FUNCTIONS ---
-  const handleLoginClick = () => {
-    // Use the Chrome Identity API to get an OAuth token.
-    chrome.identity.getAuthToken({ interactive: true }, (token) => {
-      if (chrome.runtime.lastError || !token) {
-        console.error(chrome.runtime.lastError);
-        setError("Google sign-in failed. Please try again.");
-        return;
-      }
+  // const handleLoginClick = () => {
+  //   // Use the Chrome Identity API to get an OAuth token.
+  //   chrome.identity.getAuthToken({ interactive: true }, (token) => {
+  //     if (chrome.runtime.lastError || !token) {
+  //       console.error(chrome.runtime.lastError);
+  //       setError("Google sign-in failed. Please try again.");
+  //       return;
+  //     }
 
-      // Now, use the token to sign into Firebase.
-      const credential = GoogleAuthProvider.credential(null, token);
+  //     // Now, use the token to sign into Firebase.
+  //     const credential = GoogleAuthProvider.credential(null, token);
 
-      signInWithCredential(auth, credential).catch((error) => {
-        console.error("Firebase sign-in error:", error);
-        setError("Could not sign in with Firebase.");
-      });
-    });
+  //     signInWithCredential(auth, credential).catch((error) => {
+  //       console.error("Firebase sign-in error:", error);
+  //       setError("Could not sign in with Firebase.");
+  //     });
+  //   });
+  // };
+  const handleLoginClick = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      // This opens a universal popup that works in all browsers
+      await signInWithPopup(auth, provider);
+      // Your onIdTokenChanged listener will automatically detect the successful login
+    } catch (error) {
+      console.error("Firebase sign-in error:", error);
+      setError("Google sign-in failed. Please try again.");
+    }
   };
   // App.jsx
   const handleConnectGoogle = async () => {
@@ -2438,7 +2450,7 @@ function App() {
 
     try {
       const response = await fetch(
-        `http://localhost:3001/api/research/task/${taskId}/download`,
+        ` import.meta.env.VITE_BACKEND_URL/api/research/task/${taskId}/download`,
         {
           headers: { Authorization: `Bearer ${idToken}` },
         }

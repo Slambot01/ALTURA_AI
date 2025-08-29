@@ -29,7 +29,7 @@ const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 const googleOauth2Client = new google.auth.OAuth2(
   process.env.GOOGLE_CLIENT_ID,
   process.env.GOOGLE_CLIENT_SECRET,
-  "http://localhost:3001/api/auth/google/callback"
+  `${BACKEND_BASE_URL}/api/auth/google/callback`
 );
 
 // --- Notion Client Initialization ---
@@ -42,7 +42,9 @@ const PORT = process.env.PORT || 3001;
 const corsOptions = {
   origin: [
     "http://localhost:3000",
-    `chrome-extension://fejedlikmaohocdeohobekeenjmkfhfp`,
+    "https://alturaai-psi.vercel.app",
+    "chrome-extension://<YOUR_EDGE_STORE_ID_HERE>",
+    "moz-extension://<YOUR_FIREFOX_STORE_ID_HERE>",
   ],
   credentials: true,
 };
@@ -735,7 +737,10 @@ app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
 // 1. Route to start the Notion connection process
 app.get("/api/auth/notion", verifyAuthToken, (req, res) => {
   const { uid } = req.user;
-  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=http%3A%2F%2Flocalhost%3A3001%2Fapi%2Fauth%2Fnotion%2Fcallback&state=${uid}`;
+  const redirectUri = encodeURIComponent(
+    `${BACKEND_BASE_URL}/api/auth/notion/callback`
+  );
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${uid}`;
   res.json({ url: authUrl });
 });
 
@@ -2388,7 +2393,7 @@ app.post("/api/calendar/find-times", verifyAuthToken, async (req, res) => {
     const googleOauth2Client = new google.auth.OAuth2(
       process.env.GOOGLE_CLIENT_ID,
       process.env.GOOGLE_CLIENT_SECRET,
-      "http://localhost:3001/api/auth/google/callback"
+      `${BACKEND_BASE_URL}/api/auth/google/callback`
     );
 
     googleOauth2Client.setCredentials(userDoc.data().google_tokens);
