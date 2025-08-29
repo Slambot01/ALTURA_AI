@@ -1,3 +1,5 @@
+const BACKEND_BASE_URL =
+  process.env.BACKEND_BASE_URL || "http://localhost:3001";
 // --- Import necessary packages ---
 const express = require("express");
 const cors = require("cors");
