@@ -1072,13 +1072,21 @@ app.get("/api/auth/notion", verifyAuthToken, (req, res) => {
 // 2. Callback route that Notion redirects to after user approval
 app.get("/api/auth/notion/callback", async (req, res) => {
   const { code, state } = req.query;
-
-  // Remove the prefix to get the original user ID
   const uid = state ? state.replace("user_", "") : null;
 
   if (!code || !uid) {
     return res.status(400).send("Error: Missing code or state.");
   }
+
+  // Create the redirect URI from the environment variable
+  const redirectUriForNotion = `${BACKEND_BASE_URL}/api/auth/notion/callback`;
+
+  // THIS IS OUR PROOF. IT WILL SHOW US THE EXACT URL BEING SENT.
+  console.log(
+    "--> FINAL CHECK: Sending this redirect_uri to Notion:",
+    redirectUriForNotion
+  );
+
   try {
     const tokenResponse = await fetch("https://api.notion.com/v1/oauth/token", {
       method: "POST",
@@ -1093,12 +1101,14 @@ app.get("/api/auth/notion/callback", async (req, res) => {
       body: JSON.stringify({
         grant_type: "authorization_code",
         code: code,
-        // FIX: Pass the correct redirect_uri from environment variables
-        redirect_uri: `${BACKEND_BASE_URL}/api/auth/notion/callback`,
+        redirect_uri: redirectUriForNotion, // Use the variable here
       }),
     });
+
     const tokenData = await tokenResponse.json();
     if (!tokenResponse.ok) {
+      // Also log the response from Notion for more detail
+      console.error("Notion API Error:", tokenData);
       throw new Error(
         tokenData.error_description || "Notion token exchange failed"
       );
