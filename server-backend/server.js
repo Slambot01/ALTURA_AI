@@ -103,24 +103,35 @@ const verifyAuthToken = async (req, res, next) => {
 
       // If Firebase fails, try Google OAuth access token validation
       try {
-        const googleTokenInfo = await validateGoogleOAuthToken(token);
+        const googleTokenInfo = await validateGoogleOAuthToken(token); // DEFENSIVE UID EXTRACTION - Try multiple possible fields
 
-        // Convert Google token info to Firebase-like format
+        const uid =
+          googleTokenInfo.sub ||
+          googleTokenInfo.user_id ||
+          googleTokenInfo.id ||
+          googleTokenInfo.email; // Last resort: use email as uid
+
+        if (!uid) {
+          throw new Error(
+            "No valid user ID found in Google OAuth token response"
+          );
+        }
+
+        console.log(`Found uid from Google OAuth: ${uid}`); // Convert Google token info to Firebase-like format
+
         decodedToken = {
-          uid: googleTokenInfo.sub, // Google's subject ID
+          uid: uid, // Use the defensively extracted uid
           email: googleTokenInfo.email,
-          name: googleTokenInfo.name,
+          name: googleTokenInfo.name || googleTokenInfo.email, // Fallback to email if no name
           picture: googleTokenInfo.picture,
           email_verified: googleTokenInfo.email_verified === "true",
-          // Add custom claims to identify this as Google OAuth
           token_type: "google_oauth",
         };
         tokenType = "google_oauth";
         console.log(
-          `✅ Google OAuth token verified for user: ${decodedToken.email}`
-        );
+          `✅ Google OAuth token verified for user: ${decodedToken.email}, uid: ${uid}`
+        ); // For Google OAuth tokens, ensure user exists in Firestore
 
-        // For Google OAuth tokens, ensure user exists in Firestore
         await ensureGoogleOAuthUserExists(decodedToken);
       } catch (googleError) {
         console.error("❌ Both Firebase and Google token validation failed:", {
