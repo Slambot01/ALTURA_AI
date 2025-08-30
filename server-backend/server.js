@@ -145,7 +145,6 @@ const verifyAuthToken = async (req, res, next) => {
     action: "REAUTHENTICATE",
   });
 }
-
     // Set user info on request object
     req.user = decodedToken;
     req.tokenType = tokenType;
