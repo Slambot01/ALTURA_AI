@@ -1094,7 +1094,7 @@ app.get("/api/auth/notion/callback", async (req, res) => {
         grant_type: "authorization_code",
         code: code,
         // FIX: Pass the correct redirect_uri from environment variables
-        redirect_uri: `http://localhost:3001/api/auth/notion/callback`,
+        redirect_uri: `${BACKEND_BASE_URL}/api/auth/notion/callback`,
       }),
     });
     const tokenData = await tokenResponse.json();
