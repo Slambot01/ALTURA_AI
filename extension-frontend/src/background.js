@@ -567,14 +567,14 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "save-snippet" && info.selectionText) {
     try {
-      await makeAuthenticatedRequest("/api/snippets/save", {
+      await makeAuthenticatedAPICall("/api/snippets/save", {
+        // <-- Using NEW function
         method: "POST",
         body: JSON.stringify({
           snippetText: info.selectionText,
           sourceUrl: tab.url,
         }),
       });
-
       chrome.notifications.create({
         type: "basic",
         iconUrl: "icon.png",
@@ -628,7 +628,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
               }
 
               try {
-                const apiResponse = await makeAuthenticatedRequest(
+                const apiResponse = await makeAuthenticatedAPICall(
+                  // <-- Using NEW function
                   "/api/products/analyze",
                   {
                     method: "POST",
