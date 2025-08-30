@@ -1899,6 +1899,35 @@ function App() {
     },
     [] // Remove idToken dependency
   );
+  const authedFetchFile = useCallback(async (url, options = {}) => {
+    const result = await chrome.storage.local.get(["authToken"]);
+    const token = result.authToken;
+
+    if (!token) {
+      throw new Error("User is not authenticated. Please log in.");
+    }
+
+    const headers = {
+      ...options.headers,
+      Authorization: `Bearer ${token}`,
+    };
+
+    const response = await fetch(
+      `https://alturaai-production.up.railway.app${url}`,
+      {
+        ...options,
+        headers,
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`API request failed: ${response.status} - ${errorText}`);
+    }
+
+    return response;
+  }, []);
+
   const findFreeSlots = (busyTimes) => {
     const freeSlots = [];
     const now = new Date();
@@ -2548,23 +2577,16 @@ function App() {
       setIsLoading(false);
     }
   };
+  // Replace your entire old handleDownloadResearchPDF function with this one
   const handleDownloadResearchPDF = async (taskId, taskTopic) => {
     if (downloadingTaskId) return;
-
     setDownloadingTaskId(taskId);
+    setError(""); // Clear previous errors
 
     try {
-      const response = await fetch(
-        `https://alturaai-production.up.railway.app/api/research/task/${taskId}/download`,
-        {
-          headers: { Authorization: `Bearer ${idToken}` },
-        }
+      const response = await authedFetchFile(
+        `/api/research/task/${taskId}/download`
       );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to download PDF");
-      }
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -2580,6 +2602,7 @@ function App() {
       window.URL.revokeObjectURL(url);
       setActionStatus("PDF downloaded successfully!");
     } catch (error) {
+      // The error from authedFetchFile will be more descriptive
       setError(`Failed to download PDF: ${error.message}`);
     } finally {
       setDownloadingTaskId(null);
@@ -2781,11 +2804,9 @@ function App() {
 
   // In App.jsx
   const handleConnectNotion = useCallback(async () => {
-    if (!idToken) return setError("Please log in first.");
     try {
       const data = await authedFetch("/api/auth/notion");
       if (data.url && isExtension) {
-        // FIX: Tell the background script that a Notion connection has started
         chrome.runtime.sendMessage({ action: "notion_auth_start" }, () => {
           chrome.tabs.create({ url: data.url });
         });
@@ -2793,7 +2814,7 @@ function App() {
     } catch (e) {
       setError("Could not connect to the Notion service.");
     }
-  }, [authedFetch, idToken, isExtension]);
+  }, [authedFetch, isExtension]);
   // Loading screen
   if (isLoadingAuth) {
     return (

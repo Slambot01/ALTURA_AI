@@ -1059,7 +1059,10 @@ app.get("/api/auth/notion", verifyAuthToken, (req, res) => {
   const redirectUri = encodeURIComponent(
     `${BACKEND_BASE_URL}/api/auth/notion/callback`
   );
-  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${uid}`;
+  // Add .toString() to ensure the uid is a string
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${
+    process.env.NOTION_OAUTH_CLIENT_ID
+  }&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${uid.toString()}`;
   res.json({ url: authUrl });
 });
 
