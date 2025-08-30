@@ -102,49 +102,40 @@ const verifyAuthToken = async (req, res, next) => {
       console.log("🔄 Firebase validation failed, trying Google OAuth...");
 
       // If Firebase fails, try Google OAuth access token validation
- try {
-  const googleTokenInfo = await validateGoogleOAuthToken(token);
+      try {
+        const googleTokenInfo = await validateGoogleOAuthToken(token);
 
-  // DEFENSIVE UID EXTRACTION - Try multiple possible fields
-  const uid = googleTokenInfo.sub || 
-              googleTokenInfo.user_id || 
-              googleTokenInfo.id ||
-              googleTokenInfo.email; // Last resort: use email as uid
+        // Convert Google token info to Firebase-like format
+        decodedToken = {
+          uid: googleTokenInfo.sub, // Google's subject ID
+          email: googleTokenInfo.email,
+          name: googleTokenInfo.name,
+          picture: googleTokenInfo.picture,
+          email_verified: googleTokenInfo.email_verified === "true",
+          // Add custom claims to identify this as Google OAuth
+          token_type: "google_oauth",
+        };
+        tokenType = "google_oauth";
+        console.log(
+          `✅ Google OAuth token verified for user: ${decodedToken.email}`
+        );
 
-  if (!uid) {
-    throw new Error('No valid user ID found in Google OAuth token response');
-  }
+        // For Google OAuth tokens, ensure user exists in Firestore
+        await ensureGoogleOAuthUserExists(decodedToken);
+      } catch (googleError) {
+        console.error("❌ Both Firebase and Google token validation failed:", {
+          firebase: firebaseError.message,
+          google: googleError.message,
+        });
 
-  console.log(`Found uid from Google OAuth: ${uid}`);
+        return res.status(401).json({
+          error: "Invalid or expired token. Please log in again.",
+          code: "TOKEN_VALIDATION_FAILED",
+          action: "REAUTHENTICATE",
+        });
+      }
+    }
 
-  // Convert Google token info to Firebase-like format
-  decodedToken = {
-    uid: uid, // Use the defensively extracted uid
-    email: googleTokenInfo.email,
-    name: googleTokenInfo.name || googleTokenInfo.email, // Fallback to email if no name
-    picture: googleTokenInfo.picture,
-    email_verified: googleTokenInfo.email_verified === "true",
-    token_type: "google_oauth",
-  };
-  tokenType = "google_oauth";
-  
-  console.log(`✅ Google OAuth token verified for user: ${decodedToken.email}, uid: ${uid}`);
-
-  // For Google OAuth tokens, ensure user exists in Firestore
-  await ensureGoogleOAuthUserExists(decodedToken);
-  
-} catch (googleError) {
-  console.error("❌ Both Firebase and Google token validation failed:", {
-    firebase: firebaseError.message,
-    google: googleError.message,
-  });
-
-  return res.status(401).json({
-    error: "Invalid or expired token. Please log in again.",
-    code: "TOKEN_VALIDATION_FAILED",
-    action: "REAUTHENTICATE",
-  });
-}
     // Set user info on request object
     req.user = decodedToken;
     req.tokenType = tokenType;
