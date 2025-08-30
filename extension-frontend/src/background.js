@@ -257,7 +257,7 @@ async function getValidToken() {
 // Replace your existing API call functions with this pattern:
 async function makeAuthenticatedAPICall(endpoint, options = {}) {
   const token = await getValidToken();
-
+  console.log(`Sending token to ${endpoint}:`, token);
   const response = await fetch(`${BACKEND_URL}${endpoint}`, {
     ...options,
     headers: {

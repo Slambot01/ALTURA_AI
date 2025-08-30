@@ -261,11 +261,17 @@ async function validateGoogleOAuthToken(accessToken) {
 
     const tokenInfo = await response.json();
 
-    // Verify the token is for our application
-    if (tokenInfo.audience !== process.env.GOOGLE_CLIENT_ID) {
+    // AFTER
+    // Create a list of all approved Client IDs
+    const approvedClientIds = [
+      process.env.GOOGLE_CLIENT_ID, // Your "Web application" Client ID
+      process.env.GOOGLE_EXTENSION_CLIENT_ID, // Your "Chrome Extension" Client ID
+    ];
+
+    // Verify the token's audience is in our approved list
+    if (!approvedClientIds.includes(tokenInfo.audience)) {
       throw new Error("Token audience mismatch");
     }
-
     // Check if token has required scopes
     const requiredScopes = ["email", "profile"];
     const tokenScopes = tokenInfo.scope ? tokenInfo.scope.split(" ") : [];
