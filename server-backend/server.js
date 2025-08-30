@@ -102,39 +102,49 @@ const verifyAuthToken = async (req, res, next) => {
       console.log("🔄 Firebase validation failed, trying Google OAuth...");
 
       // If Firebase fails, try Google OAuth access token validation
-      try {
-        const googleTokenInfo = await validateGoogleOAuthToken(token);
+ try {
+  const googleTokenInfo = await validateGoogleOAuthToken(token);
 
-        // Convert Google token info to Firebase-like format
-        decodedToken = {
-          uid: googleTokenInfo.sub, // Google's subject ID
-          email: googleTokenInfo.email,
-          name: googleTokenInfo.name,
-          picture: googleTokenInfo.picture,
-          email_verified: googleTokenInfo.email_verified === "true",
-          // Add custom claims to identify this as Google OAuth
-          token_type: "google_oauth",
-        };
-        tokenType = "google_oauth";
-        console.log(
-          `✅ Google OAuth token verified for user: ${decodedToken.email}`
-        );
+  // DEFENSIVE UID EXTRACTION - Try multiple possible fields
+  const uid = googleTokenInfo.sub || 
+              googleTokenInfo.user_id || 
+              googleTokenInfo.id ||
+              googleTokenInfo.email; // Last resort: use email as uid
 
-        // For Google OAuth tokens, ensure user exists in Firestore
-        await ensureGoogleOAuthUserExists(decodedToken);
-      } catch (googleError) {
-        console.error("❌ Both Firebase and Google token validation failed:", {
-          firebase: firebaseError.message,
-          google: googleError.message,
-        });
+  if (!uid) {
+    throw new Error('No valid user ID found in Google OAuth token response');
+  }
 
-        return res.status(401).json({
-          error: "Invalid or expired token. Please log in again.",
-          code: "TOKEN_VALIDATION_FAILED",
-          action: "REAUTHENTICATE",
-        });
-      }
-    }
+  console.log(`Found uid from Google OAuth: ${uid}`);
+
+  // Convert Google token info to Firebase-like format
+  decodedToken = {
+    uid: uid, // Use the defensively extracted uid
+    email: googleTokenInfo.email,
+    name: googleTokenInfo.name || googleTokenInfo.email, // Fallback to email if no name
+    picture: googleTokenInfo.picture,
+    email_verified: googleTokenInfo.email_verified === "true",
+    token_type: "google_oauth",
+  };
+  tokenType = "google_oauth";
+  
+  console.log(`✅ Google OAuth token verified for user: ${decodedToken.email}, uid: ${uid}`);
+
+  // For Google OAuth tokens, ensure user exists in Firestore
+  await ensureGoogleOAuthUserExists(decodedToken);
+  
+} catch (googleError) {
+  console.error("❌ Both Firebase and Google token validation failed:", {
+    firebase: firebaseError.message,
+    google: googleError.message,
+  });
+
+  return res.status(401).json({
+    error: "Invalid or expired token. Please log in again.",
+    code: "TOKEN_VALIDATION_FAILED",
+    action: "REAUTHENTICATE",
+  });
+}
 
     // Set user info on request object
     req.user = decodedToken;
@@ -251,6 +261,8 @@ const verifyAuthToken = async (req, res, next) => {
 // Helper function to validate Google OAuth access tokens
 async function validateGoogleOAuthToken(accessToken) {
   try {
+    console.log("🔍 Validating Google OAuth token...");
+
     const response = await fetch(
       `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`
     );
@@ -260,8 +272,13 @@ async function validateGoogleOAuthToken(accessToken) {
     }
 
     const tokenInfo = await response.json();
+    console.log("📋 Google token info received:", {
+      audience: tokenInfo.audience,
+      scope: tokenInfo.scope,
+      user_id: tokenInfo.user_id, // Log this to debug
+      email: tokenInfo.email,
+    });
 
-    // AFTER
     // Create a list of all approved Client IDs
     const approvedClientIds = [
       process.env.GOOGLE_CLIENT_ID, // Your "Web application" Client ID
@@ -272,6 +289,7 @@ async function validateGoogleOAuthToken(accessToken) {
     if (!approvedClientIds.includes(tokenInfo.audience)) {
       throw new Error("Token audience mismatch");
     }
+
     // Check if token has required scopes
     const requiredScopes = ["email", "profile"];
     const tokenScopes = tokenInfo.scope ? tokenInfo.scope.split(" ") : [];
@@ -295,9 +313,14 @@ async function validateGoogleOAuthToken(accessToken) {
       }
 
       const userInfo = await userinfoResponse.json();
+      console.log("👤 Google userinfo received:", {
+        id: userInfo.id,
+        email: userInfo.email,
+        name: userInfo.name,
+      });
 
       return {
-        sub: userInfo.id,
+        sub: userInfo.id, // This is the key field for uid
         email: userInfo.email,
         name: userInfo.name,
         picture: userInfo.picture,
@@ -305,9 +328,23 @@ async function validateGoogleOAuthToken(accessToken) {
       };
     }
 
-    return tokenInfo;
+    // For tokeninfo API response, use user_id as the sub field
+    const result = {
+      sub: tokenInfo.user_id || tokenInfo.sub, // Use user_id first, fallback to sub
+      email: tokenInfo.email,
+      name: tokenInfo.email, // tokeninfo doesn't have name, use email
+      picture: null, // tokeninfo doesn't have picture
+      email_verified: tokenInfo.verified_email || "true",
+    };
+
+    console.log("✅ Token validation result:", {
+      sub: result.sub,
+      email: result.email,
+    });
+
+    return result;
   } catch (error) {
-    console.error("Google OAuth token validation failed:", error);
+    console.error("❌ Google OAuth token validation failed:", error);
     throw new Error(`Invalid Google OAuth token: ${error.message}`);
   }
 }
@@ -315,23 +352,38 @@ async function validateGoogleOAuthToken(accessToken) {
 // Helper function to ensure Google OAuth user exists in Firestore
 async function ensureGoogleOAuthUserExists(userInfo) {
   try {
+    // CRITICAL: Validate that uid exists and is a non-empty string
+    if (
+      !userInfo.uid ||
+      typeof userInfo.uid !== "string" ||
+      userInfo.uid.trim() === ""
+    ) {
+      console.error("❌ Invalid uid for Google OAuth user:", userInfo.uid);
+      throw new Error("Invalid user ID from Google OAuth token");
+    }
+
+    console.log(`🔍 Ensuring user exists: ${userInfo.uid}`);
+
     const userRef = db.collection("users").doc(userInfo.uid);
     const userDoc = await userRef.get();
 
     if (!userDoc.exists) {
       // Create new user document for Google OAuth users
-      await userRef.set(
-        {
-          email: userInfo.email,
-          name: userInfo.name || userInfo.email,
-          picture: userInfo.picture,
-          email_verified: userInfo.email_verified,
-          auth_provider: "google_oauth",
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+      const userData = {
+        email: userInfo.email,
+        name: userInfo.name || userInfo.email,
+        email_verified: userInfo.email_verified,
+        auth_provider: "google_oauth",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+      };
+
+      // Only add picture if it exists
+      if (userInfo.picture) {
+        userData.picture = userInfo.picture;
+      }
+
+      await userRef.set(userData, { merge: true });
 
       console.log(
         `✅ Created new user document for Google OAuth user: ${userInfo.uid}`
@@ -341,13 +393,13 @@ async function ensureGoogleOAuthUserExists(userInfo) {
       await userRef.update({
         lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
       });
+      console.log(`✅ Updated last login for existing user: ${userInfo.uid}`);
     }
   } catch (error) {
-    console.error("Error ensuring Google OAuth user exists:", error);
-    // Don't throw - this shouldn't block authentication
+    console.error("❌ Error ensuring Google OAuth user exists:", error);
+    throw error; // Re-throw to prevent authentication with invalid uid
   }
 }
-
 // Enhanced error handling middleware
 const handleAuthError = (error, req, res, next) => {
   console.error("Authentication error:", error);
