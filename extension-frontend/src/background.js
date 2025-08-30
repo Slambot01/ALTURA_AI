@@ -215,7 +215,7 @@ async function getValidToken() {
     }
 
     // Test token validity by making a quick API call
-    const response = await fetch(`${API_BASE_URL}/api/auth/status`, {
+    const response = await fetch(`${BACKEND_URL}/api/auth/status`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -258,7 +258,7 @@ async function getValidToken() {
 async function makeAuthenticatedAPICall(endpoint, options = {}) {
   const token = await getValidToken();
 
-  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+  const response = await fetch(`${BACKEND_URL}${endpoint}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${token}`,
@@ -272,7 +272,7 @@ async function makeAuthenticatedAPICall(endpoint, options = {}) {
     chrome.identity.removeCachedAuthToken({ token: token });
     const newToken = await getValidToken();
 
-    return fetch(`${API_BASE_URL}${endpoint}`, {
+    return fetch(`${BACKEND_URL}${endpoint}`, {
       ...options,
       headers: {
         Authorization: `Bearer ${newToken}`,
@@ -286,7 +286,7 @@ async function makeAuthenticatedAPICall(endpoint, options = {}) {
 }
 
 // Example usage - replace your direct fetch calls with this:
-// OLD: fetch(`${API_BASE_URL}/api/notifications`, {headers: {Authorization: `Bearer ${token}`}})
+// OLD: fetch(`${BACKEND_URL}/api/notifications`, {headers: {Authorization: `Bearer ${token}`}})
 // NEW: makeAuthenticatedAPICall('/api/notifications')
 // In background.js, replace your entire chrome.runtime.onMessage.addListener block with this:
 // Replace your chrome.runtime.onMessage.addListener block with this fixed version:
@@ -497,6 +497,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         console.log("✅ Auth success received");
         sendResponse({ success: true });
         return true;
+      } else if (request.action === "LOGOUT") {
+        (async () => {
+          console.log("Logout request received. Clearing auth data.");
+          // Get the token so we can remove it from Chrome's cache
+          const { authToken } = await chrome.storage.local.get("authToken");
+          if (authToken) {
+            chrome.identity.removeCachedAuthToken({ token: authToken });
+          }
+          // Clear our authentication state from storage.
+          // Your React UI's listener will detect this change and update the screen.
+          await chrome.storage.local.set({
+            isAuthenticated: false,
+            userInfo: null,
+            authToken: null,
+          });
+          sendResponse({ success: true });
+        })();
+        return true; // Required for async operations
       } else {
         throw new Error(`Unrecognized action: ${request.action}`);
       }
@@ -677,7 +695,8 @@ function isProductPage(url) {
 
 async function checkAuthStatus() {
   try {
-    const response = await makeAuthenticatedRequest("/api/auth/status");
+    // Use the strong function that can get or refresh a token.
+    const response = await makeAuthenticatedAPICall("/api/auth/status");
     const data = await response.json();
 
     await chrome.storage.local.set({
@@ -695,7 +714,6 @@ async function checkAuthStatus() {
     });
   }
 }
-
 // Cleanup old analysis data periodically
 setInterval(() => {
   chrome.storage.local.get(null, (items) => {

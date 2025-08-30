@@ -324,7 +324,7 @@
 //   useEffect(() => {
 //     if (user) {
 //       const q = query(
-//         collection(db, "users", user.uid, "research_tasks"),
+//         collection(db, "users", user.id, "research_tasks"),
 //         orderBy("createdAt", "desc")
 //       );
 //       const unsubscribe = onSnapshot(q, (snapshot) =>
@@ -341,7 +341,7 @@
 //       // Only run if a user is logged in
 //       // Query the "orders" sub-collection inside the specific user's document
 //       const q = query(
-//         collection(db, "users", user.uid, "orders"),
+//         collection(db, "users", user.id, "orders"),
 //         orderBy("scannedAt", "desc")
 //       );
 //       const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -359,7 +359,7 @@
 //   useEffect(() => {
 //     if (user) {
 //       const q = query(
-//         collection(db, "users", user.uid, "snippets"),
+//         collection(db, "users", user.id, "snippets"),
 //         orderBy("savedAt", "desc")
 //       );
 //       const unsubscribe = onSnapshot(q, (snapshot) =>
@@ -372,7 +372,7 @@
 //   useEffect(() => {
 //     if (user) {
 //       const q = query(
-//         collection(db, "users", user.uid, "stock_alerts"),
+//         collection(db, "users", user.id, "stock_alerts"),
 //         orderBy("createdAt", "desc")
 //       );
 //       const unsubscribe = onSnapshot(q, (snapshot) =>
@@ -448,11 +448,11 @@
 //       useEffect(() => {
 //         if (!user) return;
 //         const listeners = [
-//             onSnapshot(query(collection(db, "users", user.uid, "notifications"), orderBy("timestamp", "desc")), (snapshot) => setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
-//             onSnapshot(query(collection(db, "users", user.uid, "orders"), orderBy("scannedAt", "desc")), (snapshot) => setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
-//             onSnapshot(query(collection(db, "users", user.uid, "snippets"), orderBy("savedAt", "desc")), (snapshot) => setSnippets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
-//             onSnapshot(query(collection(db, "users", user.uid, "research_tasks"), orderBy("createdAt", "desc")), (snapshot) => setResearchTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
-//             onSnapshot(query(collection(db, "users", user.uid, "stock_alerts"), orderBy("createdAt", "desc")), (snapshot) => setStockAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))))
+//             onSnapshot(query(collection(db, "users", user.id, "notifications"), orderBy("timestamp", "desc")), (snapshot) => setNotifications(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
+//             onSnapshot(query(collection(db, "users", user.id, "orders"), orderBy("scannedAt", "desc")), (snapshot) => setOrders(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
+//             onSnapshot(query(collection(db, "users", user.id, "snippets"), orderBy("savedAt", "desc")), (snapshot) => setSnippets(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
+//             onSnapshot(query(collection(db, "users", user.id, "research_tasks"), orderBy("createdAt", "desc")), (snapshot) => setResearchTasks(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })))),
+//             onSnapshot(query(collection(db, "users", user.id, "stock_alerts"), orderBy("createdAt", "desc")), (snapshot) => setStockAlerts(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))))
 //         ];
 //         return () => listeners.forEach(unsubscribe => unsubscribe());
 //     }, [user]);
@@ -1951,58 +1951,105 @@ function App() {
   // --- FIREBASE AUTH & STATUS LISTENER (FIXED) ---
 
   // ...
+  // useEffect(() => {
+  //   const unsubscribe = onIdTokenChanged(auth, async (currentUser) => {
+  //     if (currentUser) {
+  //       const token = await currentUser.getIdToken(true);
+  //       setUser(currentUser);
+  //       setIdToken(token);
+
+  //       // FIX: Store the ID token in local storage for the background script
+  //       chrome.storage.local.set({ idToken: token });
+
+  //       try {
+  //         const response = await fetch(
+  //           "https://alturaai-production.up.railway.app/api/auth/status",
+  //           {
+  //             headers: {
+  //               Authorization: `Bearer ${token}`,
+  //             },
+  //           }
+  //         );
+  //         const status = await response.json();
+  //         if (status && status.connections) {
+  //           setIsGoogleLoggedIn(status.connections.isGoogleLoggedIn || false);
+  //           setIsGithubAppInstalled(
+  //             status.connections.isGithubAppInstalled || false
+  //           );
+  //           setIsNotionConnected(status.connections.isNotionConnected || false);
+  //         }
+  //       } catch (err) {
+  //         console.error("Failed to fetch status after login:", err);
+  //       }
+  //     } else {
+  //       setUser(null);
+  //       setIdToken(null);
+  //       setIsGoogleLoggedIn(false);
+  //       setIsGithubAppInstalled(false);
+  //       setIsNotionConnected(false);
+
+  //       // FIX: Remove the token from storage on logout
+  //       chrome.storage.local.remove(["idToken"]);
+  //     }
+  //     setIsLoadingAuth(false);
+  //   });
+  //   return () => unsubscribe();
+  // }, []);
+  // ADD THIS INSTEAD
   useEffect(() => {
-    const unsubscribe = onIdTokenChanged(auth, async (currentUser) => {
-      if (currentUser) {
-        const token = await currentUser.getIdToken(true);
-        setUser(currentUser);
-        setIdToken(token);
+    // Function to check storage and update React state
+    const syncAuthState = async () => {
+      try {
+        const result = await chrome.storage.local.get([
+          "isAuthenticated",
+          "userInfo",
+          "authToken", // Use the token from chrome.identity
+        ]);
 
-        // FIX: Store the ID token in local storage for the background script
-        chrome.storage.local.set({ idToken: token });
-
-        try {
-          const response = await fetch(
-            "https://alturaai-production.up.railway.app/api/auth/status",
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            }
-          );
-          const status = await response.json();
-          if (status && status.connections) {
-            setIsGoogleLoggedIn(status.connections.isGoogleLoggedIn || false);
-            setIsGithubAppInstalled(
-              status.connections.isGithubAppInstalled || false
-            );
-            setIsNotionConnected(status.connections.isNotionConnected || false);
-          }
-        } catch (err) {
-          console.error("Failed to fetch status after login:", err);
+        if (result.isAuthenticated && result.userInfo) {
+          setUser(result.userInfo);
+          setIdToken(result.authToken); // This will power your authedFetch
+        } else {
+          setUser(null);
+          setIdToken(null);
         }
-      } else {
+      } catch (e) {
+        console.error("Error syncing auth state:", e);
         setUser(null);
         setIdToken(null);
-        setIsGoogleLoggedIn(false);
-        setIsGithubAppInstalled(false);
-        setIsNotionConnected(false);
-
-        // FIX: Remove the token from storage on logout
-        chrome.storage.local.remove(["idToken"]);
+      } finally {
+        setIsLoadingAuth(false);
       }
-      setIsLoadingAuth(false);
-    });
-    return () => unsubscribe();
-  }, []);
+    };
 
+    // Check the state immediately when the app loads
+    syncAuthState();
+
+    // Listen for changes from the background script
+    const listener = (changes, namespace) => {
+      if (
+        namespace === "local" &&
+        (changes.isAuthenticated || changes.userInfo || changes.authToken)
+      ) {
+        console.log("Auth state changed from background, re-syncing...");
+        syncAuthState();
+      }
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+
+    // Cleanup function to remove the listener when the component unmounts
+    return () => {
+      chrome.storage.onChanged.removeListener(listener);
+    };
+  }, []); // Empty dependency array ensures this runs only once on mount
   useEffect(() => {
     if (!user) return;
 
     const listeners = [
       onSnapshot(
         query(
-          collection(db, "users", user.uid, "notifications"),
+          collection(db, "users", user.id, "notifications"),
           orderBy("timestamp", "desc")
         ),
         (snapshot) =>
@@ -2012,7 +2059,7 @@ function App() {
       ),
       onSnapshot(
         query(
-          collection(db, "users", user.uid, "orders"),
+          collection(db, "users", user.id, "orders"),
           orderBy("scannedAt", "desc")
         ),
         (snapshot) =>
@@ -2020,7 +2067,7 @@ function App() {
       ),
       onSnapshot(
         query(
-          collection(db, "users", user.uid, "snippets"),
+          collection(db, "users", user.id, "snippets"),
           orderBy("savedAt", "desc")
         ),
         (snapshot) =>
@@ -2030,7 +2077,7 @@ function App() {
       ),
       onSnapshot(
         query(
-          collection(db, "users", user.uid, "research_tasks"),
+          collection(db, "users", user.id, "research_tasks"),
           orderBy("createdAt", "desc")
         ),
         (snapshot) =>
@@ -2040,7 +2087,7 @@ function App() {
       ),
       onSnapshot(
         query(
-          collection(db, "users", user.uid, "stock_alerts"),
+          collection(db, "users", user.id, "stock_alerts"),
           orderBy("createdAt", "desc")
         ),
         (snapshot) =>
@@ -2188,13 +2235,15 @@ function App() {
       setError("Failed to start Google connection.");
     }
   };
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      resetActionStates();
-    } catch (err) {
-      setError(`Logout failed: ${err.message}`);
-    }
+  // AFTER (Works with your background script)
+  const handleLogout = () => {
+    // Send a message to the background script to handle the logout.
+    chrome.runtime.sendMessage({ action: "LOGOUT" }, () => {
+      // The UI will update automatically thanks to our storage listener,
+      // but we can also clear the state here for an instant visual change.
+      setUser(null);
+      setIdToken(null);
+    });
   };
   // In app.jsx
   // In App.jsx, replace the entire handleAction function
@@ -3200,7 +3249,9 @@ function App() {
                               {snippet.text}
                             </a>
                             <span className="tag-cyan">
-                              {new URL(snippet.url).hostname}
+                              {snippet.url
+                                ? new URL(snippet.url).hostname
+                                : "No source"}
                             </span>
                           </div>
                           <button

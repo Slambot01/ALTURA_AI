@@ -796,6 +796,10 @@ app.get("/api/github/install", verifyAuthToken, async (req, res) => {
     res.status(500).json({ error: "Failed to start installation process." });
   }
 });
+console.log(
+  "Server is configured with this Redirect URI:",
+  `${BACKEND_BASE_URL}/api/auth/google/callback`
+);
 // This new endpoint generates the Google Auth URL
 app.get("/api/auth/google", verifyAuthToken, (req, res) => {
   const { uid } = req.user;
