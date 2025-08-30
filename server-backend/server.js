@@ -909,10 +909,12 @@ app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
   const tokenType = req.tokenType;
 
   try {
-    const userDoc = await db.collection("users").doc(uid).get();
-    const data = userDoc.data();
+    console.log(`Auth status check for user ${uid}, tokenType: ${tokenType}`);
 
-    // Check token expiration times
+    const userDoc = await db.collection("users").doc(uid).get();
+    const data = userDoc.exists ? userDoc.data() : {};
+
+    // Check token expiration times with null safety
     const tokenInfo = {};
 
     if (data && data.google_tokens) {
@@ -925,32 +927,48 @@ app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
       }
     }
 
-    // Enhanced response with token type information
+    // Safe timestamp conversion helper
+    const safeTimestampToISO = (timestamp) => {
+      try {
+        if (timestamp && timestamp.toDate) {
+          return timestamp.toDate().toISOString();
+        }
+        if (timestamp && timestamp.seconds) {
+          return new Date(timestamp.seconds * 1000).toISOString();
+        }
+        return null;
+      } catch (error) {
+        console.error("Timestamp conversion error:", error);
+        return null;
+      }
+    };
+
+    // Enhanced response with null safety
     const response = {
       success: true,
       user: {
         uid: uid,
-        email: req.user.email,
-        name: req.user.name,
-        picture: req.user.picture, // Available for Google OAuth users
-        email_verified: req.user.email_verified,
+        email: req.user.email || data?.email || null,
+        name: req.user.name || data?.name || null,
+        picture: req.user.picture || data?.picture || null,
+        email_verified:
+          req.user.email_verified || data?.email_verified || false,
       },
       authentication: {
-        tokenType: tokenType, // "firebase" or "google_oauth"
+        tokenType: tokenType || "unknown",
         provider:
           data?.auth_provider ||
           (tokenType === "google_oauth" ? "google_oauth" : "firebase"),
       },
       connections: {
-        isGoogleLoggedIn: !!(data && data.google_tokens), // Google service tokens (for Gmail, Calendar etc.)
+        isGoogleLoggedIn: !!(data && data.google_tokens),
         isGithubLoggedIn: !!(data && data.github_access_token),
         isNotionConnected: !!data?.notion_credentials,
         isGithubAppInstalled: !!data?.github_installation_id,
       },
       tokenInfo: tokenInfo,
-      lastTokenRefresh:
-        data?.last_token_refresh?.toDate?.()?.toISOString() || null,
-      lastLoginAt: data?.lastLoginAt?.toDate?.()?.toISOString() || null,
+      lastTokenRefresh: safeTimestampToISO(data?.last_token_refresh),
+      lastLoginAt: safeTimestampToISO(data?.lastLoginAt),
       timestamp: new Date().toISOString(),
     };
 
@@ -960,12 +978,23 @@ app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
         "Authenticated via Chrome Extension with Google OAuth";
     }
 
+    console.log(`Auth status check successful for user ${uid}`);
     res.json(response);
   } catch (error) {
-    console.error("Error checking auth status:", error);
+    // CRUCIAL: Log the actual error for debugging
+    console.error("Auth status check error for user", uid, ":", error);
+    console.error("Error stack:", error.stack);
+
     res.status(500).json({
       error: "Failed to check auth status.",
       code: "STATUS_CHECK_FAILED",
+      // Include error details in development
+      ...(process.env.NODE_ENV === "development" && {
+        debug: {
+          message: error.message,
+          stack: error.stack,
+        },
+      }),
     });
   }
 });

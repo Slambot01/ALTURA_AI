@@ -1818,7 +1818,7 @@ function App() {
   // --- Integration Status State ---
   const [isGithubAppInstalled, setIsGithubAppInstalled] = useState(false);
   const [isNotionConnected, setIsNotionConnected] = useState(false);
-
+  const [authToken, setAuthToken] = useState(null);
   // --- UI & Data State ---
   const [error, setError] = useState("");
   const [actionStatus, setActionStatus] = useState("");
@@ -1868,13 +1868,18 @@ function App() {
 
   const authedFetch = useCallback(
     async (url, options = {}) => {
-      if (!idToken) {
+      // Get token from Chrome storage instead of Firebase
+      const result = await chrome.storage.local.get(["authToken"]);
+      const token = result.authToken;
+
+      if (!token) {
         throw new Error("User is not authenticated. Please log in.");
       }
+
       const headers = {
         ...options.headers,
         "Content-Type": "application/json",
-        Authorization: `Bearer ${idToken}`,
+        Authorization: `Bearer ${token}`,
       };
 
       const response = await fetch(
@@ -1892,7 +1897,7 @@ function App() {
 
       return response.json();
     },
-    [idToken]
+    [] // Remove idToken dependency
   );
   const findFreeSlots = (busyTimes) => {
     const freeSlots = [];
@@ -1997,52 +2002,77 @@ function App() {
   // }, []);
   // ADD THIS INSTEAD
   useEffect(() => {
-    // Function to check storage and update React state
     const syncAuthState = async () => {
       try {
         const result = await chrome.storage.local.get([
           "isAuthenticated",
           "userInfo",
-          "authToken", // Use the token from chrome.identity
+          "authToken", // Make sure this is here
         ]);
 
-        if (result.isAuthenticated && result.userInfo) {
+        if (result.isAuthenticated && result.userInfo && result.authToken) {
           setUser(result.userInfo);
-          setIdToken(result.authToken); // This will power your authedFetch
+          setAuthToken(result.authToken); // Make sure this line exists
         } else {
           setUser(null);
-          setIdToken(null);
+          setAuthToken(null);
         }
       } catch (e) {
         console.error("Error syncing auth state:", e);
         setUser(null);
-        setIdToken(null);
+        setAuthToken(null);
       } finally {
         setIsLoadingAuth(false);
       }
     };
 
-    // Check the state immediately when the app loads
     syncAuthState();
 
-    // Listen for changes from the background script
     const listener = (changes, namespace) => {
       if (
         namespace === "local" &&
         (changes.isAuthenticated || changes.userInfo || changes.authToken)
       ) {
-        console.log("Auth state changed from background, re-syncing...");
         syncAuthState();
       }
     };
 
     chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
+  useEffect(() => {
+    const syncConnectionStatus = async () => {
+      try {
+        const result = await chrome.storage.local.get([
+          "isGoogleLoggedIn",
+          "isGithubAppInstalled",
+          "isNotionConnected",
+        ]);
 
-    // Cleanup function to remove the listener when the component unmounts
-    return () => {
-      chrome.storage.onChanged.removeListener(listener);
+        setIsGoogleLoggedIn(result.isGoogleLoggedIn || false);
+        setIsGithubAppInstalled(result.isGithubAppInstalled || false);
+        setIsNotionConnected(result.isNotionConnected || false);
+      } catch (error) {
+        console.error("Error syncing connection status:", error);
+      }
     };
-  }, []); // Empty dependency array ensures this runs only once on mount
+
+    syncConnectionStatus();
+
+    const listener = (changes, namespace) => {
+      if (
+        namespace === "local" &&
+        (changes.isGoogleLoggedIn ||
+          changes.isGithubAppInstalled ||
+          changes.isNotionConnected)
+      ) {
+        syncConnectionStatus();
+      }
+    };
+
+    chrome.storage.onChanged.addListener(listener);
+    return () => chrome.storage.onChanged.removeListener(listener);
+  }, []);
   useEffect(() => {
     if (!user) return;
 
@@ -2223,16 +2253,14 @@ function App() {
   };
   // App.jsx
   const handleConnectGoogle = async () => {
-    if (!idToken) return setError("Please log in first.");
-
     try {
+      // No need to check for a token here, authedFetch does it for us.
       const response = await authedFetch("/api/auth/google", { method: "GET" });
       if (response.url) {
-        // Open the new tab for the user to grant permissions
         chrome.tabs.create({ url: response.url });
       }
     } catch (e) {
-      setError("Failed to start Google connection.");
+      setError(`Failed to start Google connection: ${e.message}`);
     }
   };
   // AFTER (Works with your background script)
@@ -2249,10 +2277,21 @@ function App() {
   // In App.jsx, replace the entire handleAction function
   const handleAction = useCallback(
     (action, actionName) => {
-      if (!idToken) {
+      // ADD DEBUGGING HERE
+      console.log("🎬 handleAction Debug:");
+      console.log("- Action:", action);
+      console.log("- User exists:", !!user);
+      console.log("- AuthToken exists:", !!authToken);
+
+      if (!user || !authToken) {
+        console.error("❌ Missing auth data for action:", {
+          user: !!user,
+          authToken: !!authToken,
+        });
         setError("Please log in to perform this action.");
         return;
       }
+
       setIsLoadingAction(true);
       setLoadingActionName(actionName);
       setSummary("");
@@ -2260,17 +2299,26 @@ function App() {
       setError("");
       setActionStatus("");
 
+      // ADD THIS BEFORE SENDING MESSAGE
+      console.log("📤 Sending message to background script:", {
+        action,
+        type: action,
+      });
+
       chrome.runtime.sendMessage(
         { action: action, type: action },
         (response) => {
+          // ADD THIS TO SEE BACKGROUND RESPONSE
+          console.log("📥 Background script response:", response);
+
           if (response && response.error) {
+            console.error("❌ Background script error:", response.error);
             setError(response.error);
           } else if (response && response.summary) {
             setSummary(response.summary);
           } else if (response && response.message) {
             setActionStatus(response.message);
           } else if (response && response.nextAction) {
-            // FIX: Correctly set the persistent 'nextAction' state
             setNextAction(response.nextAction);
           }
           setIsLoadingAction(false);
@@ -2278,7 +2326,7 @@ function App() {
         }
       );
     },
-    [idToken]
+    [user, authToken] // CHANGE FROM [idToken] TO [user, authToken]
   );
   // const handleAction = useCallback(
   //   (action, actionName) => {
