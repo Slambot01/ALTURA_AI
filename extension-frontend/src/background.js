@@ -10,34 +10,40 @@ const firebaseConfig = {
   measurementId: "G-W4JPR4DMBL",
 };
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
-import {
-  getAuth,
-  onIdTokenChanged,
-} from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
+// import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+// import {
+//   getAuth,
+//   onIdTokenChanged,
+// } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-auth.js";
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
+// const app = initializeApp(firebaseConfig);
+// const auth = getAuth(app);
 
 // State management
 const injectedTabs = new Set();
 
 // SINGLE auth listener - onIdTokenChanged is the single source of truth
-onIdTokenChanged(auth, async (user) => {
-  if (user) {
+chrome.identity.onSignInChanged.addListener(async (account, signedIn) => {
+  console.log("🔐 Chrome Identity state changed:", signedIn);
+
+  if (signedIn) {
     try {
-      const idToken = await user.getIdToken();
-      await chrome.storage.local.set({ idToken });
-      console.log("🔐 Auth state changed: logged in, token stored.");
-      await checkAuthStatus();
+      const result = await chrome.storage.local.get(["authToken"]);
+      if (result.authToken) {
+        console.log("🔐 Auth state changed: logged in, token found.");
+        await checkAuthStatus();
+      }
     } catch (error) {
-      console.error("❌ Error storing token:", error);
-      await chrome.storage.local.remove("idToken");
+      console.error("❌ Error checking stored token:", error);
     }
   } else {
-    await chrome.storage.local.remove("idToken");
+    await chrome.storage.local.remove([
+      "authToken",
+      "userInfo",
+      "isAuthenticated",
+    ]);
     console.log("🔐 Auth state changed: logged out, token removed.");
-    // Clear connection status when logged out
+
     await chrome.storage.local.set({
       isGoogleLoggedIn: false,
       isGithubAppInstalled: false,
@@ -71,9 +77,10 @@ function handleAuthError() {
 
 // Simplified API call function - token comes from storage only
 async function makeAuthenticatedRequest(endpoint, options = {}) {
-  const { idToken } = await chrome.storage.local.get("idToken");
-
-  if (!idToken) {
+  const storage = await chrome.storage.local.get(["idToken", "authToken"]);
+  // Try Firebase first, then Chrome Identity
+  const token = storage.authToken || storage.idToken;
+  if (!token) {
     handleAuthError();
     throw new Error(
       "Please log in through the AlturaAI extension popup to use this feature."
@@ -84,7 +91,7 @@ async function makeAuthenticatedRequest(endpoint, options = {}) {
     ...options,
     headers: {
       ...options.headers,
-      Authorization: `Bearer ${idToken}`,
+      Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
   });
@@ -179,7 +186,108 @@ async function sendMessageToContentScript(tabId, message) {
     });
   });
 }
+// Add this function to your Chrome extension's background.js
 
+async function getValidToken() {
+  try {
+    // First, try to get cached token
+    let token = await new Promise((resolve, reject) => {
+      chrome.identity.getAuthToken({ interactive: false }, (token) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+        } else {
+          resolve(token);
+        }
+      });
+    });
+
+    if (!token) {
+      // No cached token, get new one interactively
+      token = await new Promise((resolve, reject) => {
+        chrome.identity.getAuthToken({ interactive: true }, (token) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(token);
+          }
+        });
+      });
+    }
+
+    // Test token validity by making a quick API call
+    const response = await fetch(`${API_BASE_URL}/api/auth/status`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (response.status === 401) {
+      console.log("Token expired, refreshing...");
+
+      // Remove expired token from cache
+      chrome.identity.removeCachedAuthToken({ token: token });
+
+      // Get fresh token
+      token = await new Promise((resolve, reject) => {
+        chrome.identity.getAuthToken({ interactive: true }, (newToken) => {
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(newToken);
+          }
+        });
+      });
+    }
+
+    return token;
+  } catch (error) {
+    console.error("Error getting valid token:", error);
+
+    // Last resort: clear all cached tokens and get fresh one
+    chrome.identity.clearAllCachedAuthTokens(() => {
+      chrome.identity.getAuthToken({ interactive: true }, (token) => {
+        return token;
+      });
+    });
+  }
+}
+
+// Replace your existing API call functions with this pattern:
+async function makeAuthenticatedAPICall(endpoint, options = {}) {
+  const token = await getValidToken();
+
+  const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...options.headers,
+    },
+  });
+
+  // If still getting 401, try one more time with fresh token
+  if (response.status === 401) {
+    chrome.identity.removeCachedAuthToken({ token: token });
+    const newToken = await getValidToken();
+
+    return fetch(`${API_BASE_URL}${endpoint}`, {
+      ...options,
+      headers: {
+        Authorization: `Bearer ${newToken}`,
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+  }
+
+  return response;
+}
+
+// Example usage - replace your direct fetch calls with this:
+// OLD: fetch(`${API_BASE_URL}/api/notifications`, {headers: {Authorization: `Bearer ${token}`}})
+// NEW: makeAuthenticatedAPICall('/api/notifications')
 // In background.js, replace your entire chrome.runtime.onMessage.addListener block with this:
 // Replace your chrome.runtime.onMessage.addListener block with this fixed version:
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -253,6 +361,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
       }
       // Handle get_next_action separately
+      // Handle get_next_action separately
       else if (request.action === "get_next_action") {
         try {
           const historyItems = await chrome.history.search({
@@ -277,6 +386,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           sendResponse({
             error: err.message || "An unexpected error occurred.",
           });
+        }
+        return true;
+      }
+      // ADD THIS NEW SECTION HERE:
+      // Handle Chrome Identity API authentication success
+      else if (request.action === "AUTH_SUCCESS") {
+        console.log("✅ Chrome Identity authentication successful!");
+        console.log("User Info:", request.userInfo);
+
+        try {
+          // Store authentication data
+          await chrome.storage.local.set({
+            authToken: request.token,
+            userInfo: request.userInfo,
+            isAuthenticated: true,
+          });
+
+          // Update extension badge to show success
+          chrome.action.setBadgeText({ text: "✓" });
+          chrome.action.setBadgeBackgroundColor({ color: "#4CAF50" });
+
+          // Check auth status to update connection states
+          await checkAuthStatus();
+
+          console.log("🔐 Chrome Identity auth data stored successfully");
+          sendResponse({ success: true, message: "Authentication successful" });
+        } catch (error) {
+          console.error("Error storing Chrome Identity auth data:", error);
+          sendResponse({ success: false, error: error.message });
         }
         return true;
       }
@@ -355,10 +493,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             });
             break;
         }
+      } else if (request.action === "AUTH_SUCCESS") {
+        console.log("✅ Auth success received");
+        sendResponse({ success: true });
+        return true;
       } else {
         throw new Error(`Unrecognized action: ${request.action}`);
       }
-
       // Make API request if endpoint is set
       if (endpoint) {
         console.log(

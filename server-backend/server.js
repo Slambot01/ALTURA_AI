@@ -61,6 +61,8 @@ function generateJwt() {
   };
   return jwt.sign(payload, privateKey, { algorithm: "RS256" });
 }
+// Enhanced authentication middleware that supports both Firebase ID tokens and Google OAuth access tokens
+
 const verifyAuthToken = async (req, res, next) => {
   try {
     // Check for Authorization header
@@ -75,9 +77,9 @@ const verifyAuthToken = async (req, res, next) => {
       });
     }
 
-    const idToken = req.headers.authorization.split("Bearer ")[1];
+    const token = req.headers.authorization.split("Bearer ")[1];
 
-    if (!idToken) {
+    if (!token) {
       return res.status(401).json({
         error: "Unauthorized: Invalid token format",
         code: "INVALID_TOKEN_FORMAT",
@@ -87,73 +89,120 @@ const verifyAuthToken = async (req, res, next) => {
 
     console.log("🔐 Verifying token...");
 
-    // Verify the ID token with Firebase Admin
-    const decodedToken = await admin.auth().verifyIdToken(idToken, true); // Force refresh check
-    req.user = decodedToken;
+    // Try to determine token type and validate accordingly
+    let decodedToken = null;
+    let tokenType = null;
 
-    console.log(`✅ Token verified for user: ${decodedToken.uid}`);
+    // First, try Firebase ID token validation
+    try {
+      decodedToken = await admin.auth().verifyIdToken(token, true);
+      tokenType = "firebase";
+      console.log(`✅ Firebase token verified for user: ${decodedToken.uid}`);
+    } catch (firebaseError) {
+      console.log("🔄 Firebase validation failed, trying Google OAuth...");
 
-    // FIXED: Enhanced Google token refresh logic
-    const userDoc = await db.collection("users").doc(req.user.uid).get();
-
-    if (userDoc.exists && userDoc.data().google_tokens) {
-      const tokens = userDoc.data().google_tokens;
-      const requestOauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET
-      );
-      requestOauth2Client.setCredentials(tokens);
-
-      // FIXED: Better token expiration check and refresh
+      // If Firebase fails, try Google OAuth access token validation
       try {
-        // Check if token is expired or will expire within 5 minutes
-        const isExpired =
-          !tokens.expiry_date || tokens.expiry_date <= Date.now();
-        const willExpireSoon =
-          tokens.expiry_date && tokens.expiry_date - Date.now() < 5 * 60 * 1000; // 5 minutes
+        const googleTokenInfo = await validateGoogleOAuthToken(token);
 
-        if (
-          isExpired ||
-          willExpireSoon ||
-          requestOauth2Client.isTokenExpiring()
-        ) {
-          console.log(
-            "🔄 Google token is expired/expiring, attempting to refresh..."
-          );
+        // Convert Google token info to Firebase-like format
+        decodedToken = {
+          uid: googleTokenInfo.sub, // Google's subject ID
+          email: googleTokenInfo.email,
+          name: googleTokenInfo.name,
+          picture: googleTokenInfo.picture,
+          email_verified: googleTokenInfo.email_verified === "true",
+          // Add custom claims to identify this as Google OAuth
+          token_type: "google_oauth",
+        };
+        tokenType = "google_oauth";
+        console.log(
+          `✅ Google OAuth token verified for user: ${decodedToken.email}`
+        );
 
-          if (!tokens.refresh_token) {
+        // For Google OAuth tokens, ensure user exists in Firestore
+        await ensureGoogleOAuthUserExists(decodedToken);
+      } catch (googleError) {
+        console.error("❌ Both Firebase and Google token validation failed:", {
+          firebase: firebaseError.message,
+          google: googleError.message,
+        });
+
+        return res.status(401).json({
+          error: "Invalid or expired token. Please log in again.",
+          code: "TOKEN_VALIDATION_FAILED",
+          action: "REAUTHENTICATE",
+        });
+      }
+    }
+
+    // Set user info on request object
+    req.user = decodedToken;
+    req.tokenType = tokenType;
+
+    // Handle Google token refresh for Firebase tokens only
+    if (tokenType === "firebase") {
+      const userDoc = await db.collection("users").doc(req.user.uid).get();
+
+      if (userDoc.exists && userDoc.data().google_tokens) {
+        const tokens = userDoc.data().google_tokens;
+        const requestOauth2Client = new google.auth.OAuth2(
+          process.env.GOOGLE_CLIENT_ID,
+          process.env.GOOGLE_CLIENT_SECRET
+        );
+        requestOauth2Client.setCredentials(tokens);
+
+        try {
+          const isExpired =
+            !tokens.expiry_date || tokens.expiry_date <= Date.now();
+          const willExpireSoon =
+            tokens.expiry_date &&
+            tokens.expiry_date - Date.now() < 5 * 60 * 1000;
+
+          if (
+            isExpired ||
+            willExpireSoon ||
+            requestOauth2Client.isTokenExpiring()
+          ) {
             console.log(
-              "❌ No refresh token available, user needs to re-authenticate"
+              "🔄 Google service token is expired/expiring, attempting to refresh..."
             );
-            // Don't fail here, but log the issue
-          } else {
-            const { credentials } =
-              await requestOauth2Client.refreshAccessToken();
 
-            // Update the new tokens in Firestore
-            await db
-              .collection("users")
-              .doc(req.user.uid)
-              .update({
-                google_tokens: {
-                  ...credentials,
-                  // Preserve refresh_token if not returned in new credentials
-                  refresh_token:
-                    credentials.refresh_token || tokens.refresh_token,
-                },
-                last_token_refresh:
-                  admin.firestore.FieldValue.serverTimestamp(),
-              });
+            if (!tokens.refresh_token) {
+              console.log(
+                "❌ No refresh token available, user needs to re-authenticate"
+              );
+            } else {
+              const { credentials } =
+                await requestOauth2Client.refreshAccessToken();
 
-            console.log("✅ Google token refreshed and updated in Firestore.");
+              await db
+                .collection("users")
+                .doc(req.user.uid)
+                .update({
+                  google_tokens: {
+                    ...credentials,
+                    refresh_token:
+                      credentials.refresh_token || tokens.refresh_token,
+                  },
+                  last_token_refresh:
+                    admin.firestore.FieldValue.serverTimestamp(),
+                });
+
+              console.log(
+                "✅ Google service token refreshed and updated in Firestore."
+              );
+            }
           }
+        } catch (refreshError) {
+          console.error(
+            "❌ Google service token refresh failed:",
+            refreshError
+          );
+          console.log(
+            "⚠️  Continuing request without Google service token refresh"
+          );
         }
-      } catch (refreshError) {
-        console.error("❌ Google token refresh failed:", refreshError);
-
-        // FIXED: Don't fail the entire request if Google token refresh fails
-        // Instead, let the request continue and handle it in the specific endpoint
-        console.log("⚠️  Continuing request without Google token refresh");
       }
     }
 
@@ -161,14 +210,12 @@ const verifyAuthToken = async (req, res, next) => {
   } catch (error) {
     console.error("❌ Token verification error:", error);
 
-    // Enhanced error handling with specific error codes
     let errorResponse = {
       error: "Authentication failed. Please log in again.",
       code: "AUTH_FAILED",
       action: "REFRESH_TOKEN",
     };
 
-    // Handle different types of token errors
     if (error.code === "auth/id-token-expired") {
       errorResponse = {
         error: "Session expired. Please refresh your token.",
@@ -187,15 +234,8 @@ const verifyAuthToken = async (req, res, next) => {
         code: "INVALID_TOKEN",
         action: "REFRESH_TOKEN",
       };
-    } else if (error.code === "auth/argument-error") {
-      errorResponse = {
-        error: "Token format is invalid. Please refresh your token.",
-        code: "INVALID_TOKEN_FORMAT",
-        action: "REFRESH_TOKEN",
-      };
     }
 
-    // Add debug info in development
     if (process.env.NODE_ENV === "development") {
       errorResponse.debug = {
         message: error.message,
@@ -207,6 +247,100 @@ const verifyAuthToken = async (req, res, next) => {
     return res.status(401).json(errorResponse);
   }
 };
+
+// Helper function to validate Google OAuth access tokens
+async function validateGoogleOAuthToken(accessToken) {
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/oauth2/v1/tokeninfo?access_token=${accessToken}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`Google tokeninfo API returned ${response.status}`);
+    }
+
+    const tokenInfo = await response.json();
+
+    // Verify the token is for our application
+    if (tokenInfo.audience !== process.env.GOOGLE_CLIENT_ID) {
+      throw new Error("Token audience mismatch");
+    }
+
+    // Check if token has required scopes
+    const requiredScopes = ["email", "profile"];
+    const tokenScopes = tokenInfo.scope ? tokenInfo.scope.split(" ") : [];
+
+    const hasRequiredScopes = requiredScopes.some((scope) =>
+      tokenScopes.some((tokenScope) => tokenScope.includes(scope))
+    );
+
+    if (!hasRequiredScopes) {
+      console.log(
+        "⚠️  Token doesn't have email/profile scopes, getting user info from userinfo API"
+      );
+
+      // Fallback: get user info from userinfo API
+      const userinfoResponse = await fetch(
+        `https://www.googleapis.com/oauth2/v2/userinfo?access_token=${accessToken}`
+      );
+
+      if (!userinfoResponse.ok) {
+        throw new Error("Failed to get user info from Google");
+      }
+
+      const userInfo = await userinfoResponse.json();
+
+      return {
+        sub: userInfo.id,
+        email: userInfo.email,
+        name: userInfo.name,
+        picture: userInfo.picture,
+        email_verified: userInfo.verified_email ? "true" : "false",
+      };
+    }
+
+    return tokenInfo;
+  } catch (error) {
+    console.error("Google OAuth token validation failed:", error);
+    throw new Error(`Invalid Google OAuth token: ${error.message}`);
+  }
+}
+
+// Helper function to ensure Google OAuth user exists in Firestore
+async function ensureGoogleOAuthUserExists(userInfo) {
+  try {
+    const userRef = db.collection("users").doc(userInfo.uid);
+    const userDoc = await userRef.get();
+
+    if (!userDoc.exists) {
+      // Create new user document for Google OAuth users
+      await userRef.set(
+        {
+          email: userInfo.email,
+          name: userInfo.name || userInfo.email,
+          picture: userInfo.picture,
+          email_verified: userInfo.email_verified,
+          auth_provider: "google_oauth",
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
+      console.log(
+        `✅ Created new user document for Google OAuth user: ${userInfo.uid}`
+      );
+    } else {
+      // Update last login time
+      await userRef.update({
+        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    }
+  } catch (error) {
+    console.error("Error ensuring Google OAuth user exists:", error);
+    // Don't throw - this shouldn't block authentication
+  }
+}
 
 // Enhanced error handling middleware
 const handleAuthError = (error, req, res, next) => {
@@ -552,23 +686,95 @@ async function testInstallation(installationId) {
   }
 }
 
+// Updated sign-in endpoint that handles both Firebase and Google OAuth tokens
+
 app.post("/api/auth/signin", verifyAuthToken, async (req, res) => {
-  const { uid, email, name } = req.user;
+  const { uid, email, name, picture, email_verified } = req.user;
+  const tokenType = req.tokenType;
+
   try {
-    await db
-      .collection("users")
-      .doc(uid)
-      .set(
-        {
-          email,
-          name: name || email, // Use email as name if name is not available
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-    res.json({ success: true, message: `User ${uid} processed.` });
+    const userRef = db.collection("users").doc(uid);
+    const existingUser = await userRef.get();
+
+    const userData = {
+      email,
+      name: name || email, // Use email as name if name is not available
+      ...(picture && { picture }), // Only add picture if it exists
+      email_verified: email_verified || false,
+      auth_provider: tokenType === "google_oauth" ? "google_oauth" : "firebase",
+      lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    if (!existingUser.exists) {
+      // New user
+      userData.createdAt = admin.firestore.FieldValue.serverTimestamp();
+      await userRef.set(userData, { merge: true });
+
+      console.log(`✅ New user created via ${tokenType}: ${uid}`);
+
+      res.json({
+        success: true,
+        message: `Welcome! User ${uid} created successfully.`,
+        isNewUser: true,
+        tokenType,
+      });
+    } else {
+      // Existing user - update login info
+      await userRef.set(userData, { merge: true });
+
+      console.log(`✅ Existing user signed in via ${tokenType}: ${uid}`);
+
+      res.json({
+        success: true,
+        message: `Welcome back! User ${uid} signed in successfully.`,
+        isNewUser: false,
+        tokenType,
+      });
+    }
   } catch (error) {
-    res.status(500).json({ error: "Failed to process sign-in." });
+    console.error("Error processing sign-in:", error);
+    res.status(500).json({
+      error: "Failed to process sign-in.",
+      tokenType,
+    });
+  }
+});
+
+// Optional: Add a new endpoint specifically for Chrome extension authentication
+app.post("/api/auth/chrome-signin", verifyAuthToken, async (req, res) => {
+  const { uid, email, name, picture } = req.user;
+
+  // This endpoint assumes Google OAuth token (from Chrome extension)
+  if (req.tokenType !== "google_oauth") {
+    return res.status(400).json({
+      error:
+        "This endpoint is only for Chrome extension Google OAuth authentication",
+    });
+  }
+
+  try {
+    const userRef = db.collection("users").doc(uid);
+    await userRef.set(
+      {
+        email,
+        name: name || email,
+        picture,
+        auth_provider: "chrome_extension",
+        chrome_extension_auth: true,
+        lastLoginAt: admin.firestore.FieldValue.serverTimestamp(),
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      },
+      { merge: true }
+    );
+
+    res.json({
+      success: true,
+      message: `Chrome extension authentication successful for ${email}`,
+      user: { uid, email, name },
+    });
+  } catch (error) {
+    console.error("Chrome extension sign-in error:", error);
+    res.status(500).json({ error: "Chrome extension authentication failed" });
   }
 });
 
@@ -686,8 +892,11 @@ app.get("/api/github/oauth/callback", verifyAuthToken, async (req, res) => {
     res.status(500).send("GitHub Authentication failed.");
   }
 });
+// Updated /api/auth/status endpoint that handles both Firebase and Google OAuth tokens
+
 app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
   const { uid } = req.user;
+  const tokenType = req.tokenType;
 
   try {
     const userDoc = await db.collection("users").doc(uid).get();
@@ -706,24 +915,42 @@ app.get("/api/auth/status", verifyAuthToken, async (req, res) => {
       }
     }
 
-    res.json({
+    // Enhanced response with token type information
+    const response = {
       success: true,
       user: {
         uid: uid,
         email: req.user.email,
         name: req.user.name,
+        picture: req.user.picture, // Available for Google OAuth users
+        email_verified: req.user.email_verified,
+      },
+      authentication: {
+        tokenType: tokenType, // "firebase" or "google_oauth"
+        provider:
+          data?.auth_provider ||
+          (tokenType === "google_oauth" ? "google_oauth" : "firebase"),
       },
       connections: {
-        isGoogleLoggedIn: !!(data && data.google_tokens),
+        isGoogleLoggedIn: !!(data && data.google_tokens), // Google service tokens (for Gmail, Calendar etc.)
         isGithubLoggedIn: !!(data && data.github_access_token),
-        isNotionConnected: !!data.notion_credentials,
-        isGithubAppInstalled: !!data.github_installation_id,
+        isNotionConnected: !!data?.notion_credentials,
+        isGithubAppInstalled: !!data?.github_installation_id,
       },
       tokenInfo: tokenInfo,
       lastTokenRefresh:
         data?.last_token_refresh?.toDate?.()?.toISOString() || null,
+      lastLoginAt: data?.lastLoginAt?.toDate?.()?.toISOString() || null,
       timestamp: new Date().toISOString(),
-    });
+    };
+
+    // Add additional info for Google OAuth users
+    if (tokenType === "google_oauth") {
+      response.authentication.note =
+        "Authenticated via Chrome Extension with Google OAuth";
+    }
+
+    res.json(response);
   } catch (error) {
     console.error("Error checking auth status:", error);
     res.status(500).json({

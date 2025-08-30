@@ -294,7 +294,7 @@
 //     const authedFetchNotifications = async () => {
 //       setLoading(true);
 //       try {
-//         const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/notifications");
+//         const response = await authedFetch("  'https://alturaai-production.up.railway.app'/api/notifications");
 //         if (!response.ok) throw new Error("Failed to authedFetch notifications.");
 //         const data = await response.json();
 //         const githubNotifications = data.filter(
@@ -551,7 +551,7 @@
 
 //   const handleLogout = async () => {
 //     try {
-//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/logout", {
+//       const response = await authedFetch("  'https://alturaai-production.up.railway.app'/api/logout", {
 //         method: "POST",
 //         headers: { "Content-Type": "application/json" },
 //       });
@@ -579,7 +579,7 @@
 //       "Content-Type": "application/json",
 //       Authorization: `Bearer ${idToken}`,
 //     };
-//     const response = await authedFetch(` import.meta.env.VITE_BACKEND_URL${url}`, {
+//     const response = await authedFetch(`  'https://alturaai-production.up.railway.app'${url}`, {
 //       ...options,
 //       headers,
 //     });
@@ -639,7 +639,7 @@
 //     setIsResearching(true);
 //     resetActionStates();
 //     try {
-//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/research/start", {
+//       const response = await authedFetch("  'https://alturaai-production.up.railway.app'/api/research/start", {
 //         method: "POST",
 //         headers: { "Content-Type": "application/json" },
 //         body: JSON.stringify({ topic: researchTopic }),
@@ -663,7 +663,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         ` import.meta.env.VITE_BACKEND_URL/api/research/task/${taskId}/download`
+//         `  'https://alturaai-production.up.railway.app'/api/research/task/${taskId}/download`
 //       );
 
 //       if (!response.ok) {
@@ -700,7 +700,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         ` import.meta.env.VITE_BACKEND_URL/api/research/task/${taskId}`,
+//         `  'https://alturaai-production.up.railway.app'/api/research/task/${taskId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -743,7 +743,7 @@
 //     resetActionStates();
 //     try {
 //       const response = await authedFetch(
-//         " import.meta.env.VITE_BACKEND_URL/api/orders/add-tracking",
+//         "  'https://alturaai-production.up.railway.app'/api/orders/add-tracking",
 //         {
 //           method: "POST",
 //           headers: { "Content-Type": "application/json" },
@@ -772,7 +772,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         ` import.meta.env.VITE_BACKEND_URL/api/orders/${orderId}`,
+//         `  'https://alturaai-production.up.railway.app'/api/orders/${orderId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -795,7 +795,7 @@
 //   };
 //   const handleConnectNotion = async () => {
 //     try {
-//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/auth/notion");
+//       const response = await authedFetch("  'https://alturaai-production.up.railway.app'/api/auth/notion");
 //       const data = await response.json();
 //       if (data.url) {
 //         chrome.tabs.create({ url: data.url });
@@ -817,7 +817,7 @@
 // //     Authorization: `Bearer ${token}`,
 // //   };
 
-// //   const response = await authedFetch(` import.meta.env.VITE_BACKEND_URL${url}`, {
+// //   const response = await authedFetch(`  'https://alturaai-production.up.railway.app'${url}`, {
 // //     ...options,
 // //     headers,
 // //   });
@@ -826,7 +826,7 @@
 
 //   const handleInstallGitHubApp = async () => {
 //     try {
-//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/github/install");
+//       const response = await authedFetch("  'https://alturaai-production.up.railway.app'/api/github/install");
 //       const data = await response.json();
 //       if (data.url) {
 //         chrome.tabs.create({ url: data.url });
@@ -850,7 +850,7 @@
 //     resetActionStates();
 //     try {
 //       const response = await authedFetch(
-//         " import.meta.env.VITE_BACKEND_URL/api/stocks/add-alert",
+//         "  'https://alturaai-production.up.railway.app'/api/stocks/add-alert",
 //         {
 //           method: "POST",
 //           headers: { "Content-Type": "application/json" },
@@ -879,7 +879,7 @@
 
 //     try {
 //       const response = await authedFetch(
-//         ` import.meta.env.VITE_BACKEND_URL/api/stocks/alert/${alertId}`,
+//         `  'https://alturaai-production.up.railway.app'/api/stocks/alert/${alertId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -900,7 +900,7 @@
 //     setDeletingNotificationId(notificationId);
 //     try {
 //       const response = await authedFetch(
-//         ` import.meta.env.VITE_BACKEND_URL/api/notifications/${notificationId}`,
+//         `  'https://alturaai-production.up.railway.app'/api/notifications/${notificationId}`,
 //         {
 //           method: "DELETE",
 //         }
@@ -928,7 +928,7 @@
 //     const currentAnalysis = summary; // Get the current analysis text
 
 //     try {
-//       const response = await authedFetch(" import.meta.env.VITE_BACKEND_URL/api/debug/followup", {
+//       const response = await authedFetch("  'https://alturaai-production.up.railway.app'/api/debug/followup", {
 //         method: "POST",
 //         headers: { "Content-Type": "application/json" },
 //         body: JSON.stringify({
@@ -1877,10 +1877,13 @@ function App() {
         Authorization: `Bearer ${idToken}`,
       };
 
-      const response = await fetch(` import.meta.env.VITE_BACKEND_URL${url}`, {
-        ...options,
-        headers,
-      });
+      const response = await fetch(
+        `https://alturaai-production.up.railway.app${url}`,
+        {
+          ...options,
+          headers,
+        }
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -1960,7 +1963,7 @@ function App() {
 
         try {
           const response = await fetch(
-            " import.meta.env.VITE_BACKEND_URL/api/auth/status",
+            "https://alturaai-production.up.railway.app/api/auth/status",
             {
               headers: {
                 Authorization: `Bearer ${token}`,
@@ -2155,16 +2158,21 @@ function App() {
   //     });
   //   });
   // };
-  const handleLoginClick = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      // This opens a universal popup that works in all browsers
-      await signInWithPopup(auth, provider);
-      // Your onIdTokenChanged listener will automatically detect the successful login
-    } catch (error) {
-      console.error("Firebase sign-in error:", error);
-      setError("Google sign-in failed. Please try again.");
-    }
+  // const handleLoginClick = async () => {
+  //   const provider = new GoogleAuthProvider();
+  //   try {
+  //     // This opens a universal popup that works in all browsers
+  //     await signInWithPopup(auth, provider);
+  //     // Your onIdTokenChanged listener will automatically detect the successful login
+  //   } catch (error) {
+  //     console.error("Firebase sign-in error:", error);
+  //     setError("Google sign-in failed. Please try again.");
+  //   }
+  // };
+  const handleLoginClick = () => {
+    const authPageUrl = chrome.runtime.getURL("auth.html");
+    // Open the auth page in a new, small popup window
+    window.open(authPageUrl, "authWindow", "width=400,height=600");
   };
   // App.jsx
   const handleConnectGoogle = async () => {
@@ -2450,7 +2458,7 @@ function App() {
 
     try {
       const response = await fetch(
-        ` import.meta.env.VITE_BACKEND_URL/api/research/task/${taskId}/download`,
+        `https://alturaai-production.up.railway.app/api/research/task/${taskId}/download`,
         {
           headers: { Authorization: `Bearer ${idToken}` },
         }

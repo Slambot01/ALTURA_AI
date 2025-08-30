@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Your AI-powered browser assistant.",
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'"
+    "extension_pages": "script-src 'self' https://apis.google.com https://www.gstatic.com; child-src 'self' https://alturaai.firebaseapp.com; connect-src 'self' https://www.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com; object-src 'self'"
   },
   "permissions": [
     "notifications",
@@ -30,9 +30,12 @@
       "https://www.googleapis.com/auth/calendar.events.readonly"
     ]
   },
+  "sandbox": {
+    "pages": ["auth.html"]
+  },
   "web_accessible_resources": [
     {
-      "resources": ["auth.html", "auth.js"],
+      "resources": ["auth.html"],
       "matches": ["<all_urls>"]
     }
   ],
