@@ -1060,19 +1060,22 @@ app.get("/api/auth/notion", verifyAuthToken, (req, res) => {
     `${BACKEND_BASE_URL}/api/auth/notion/callback`
   );
 
-  const stateAsString = uid.toString();
+  // Add a prefix to force it to be treated as a string
+  const stateWithPrefix = `user_${uid.toString()}`;
+  console.log("--> V3: SENDING NOTION STATE WITH PREFIX:", stateWithPrefix);
 
-  // THIS IS OUR PROOF
-  console.log("--> V2: CONVERTING NOTION STATE TO STRING:", stateAsString);
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${stateWithPrefix}`;
 
-  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${stateAsString}`;
   res.json({ url: authUrl });
 });
 
 // 2. Callback route that Notion redirects to after user approval
 app.get("/api/auth/notion/callback", async (req, res) => {
   const { code, state } = req.query;
-  const uid = state;
+
+  // Remove the prefix to get the original user ID
+  const uid = state ? state.replace("user_", "") : null;
+
   if (!code || !uid) {
     return res.status(400).send("Error: Missing code or state.");
   }
