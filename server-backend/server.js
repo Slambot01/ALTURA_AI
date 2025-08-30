@@ -1059,10 +1059,13 @@ app.get("/api/auth/notion", verifyAuthToken, (req, res) => {
   const redirectUri = encodeURIComponent(
     `${BACKEND_BASE_URL}/api/auth/notion/callback`
   );
-  // Add .toString() to ensure the uid is a string
-  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${
-    process.env.NOTION_OAUTH_CLIENT_ID
-  }&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${uid.toString()}`;
+
+  const stateAsString = uid.toString();
+
+  // THIS IS OUR PROOF
+  console.log("--> V2: CONVERTING NOTION STATE TO STRING:", stateAsString);
+
+  const authUrl = `https://api.notion.com/v1/oauth/authorize?client_id=${process.env.NOTION_OAUTH_CLIENT_ID}&response_type=code&owner=user&redirect_uri=${redirectUri}&state=${stateAsString}`;
   res.json({ url: authUrl });
 });
 
