@@ -826,7 +826,7 @@ app.get("/api/auth/google", verifyAuthToken, (req, res) => {
   res.json({ url });
 });
 
-app.get("/api/auth/google/callback", async (req, res) => {
+app.get("/api/auth/google/callback", verifyAuthToken, async (req, res) => {
   // <-- verifyAuthToken is REMOVED
   const { code, state } = req.query; // Get the code and the state from the URL
   const uid = state; // The state is the user ID we passed
