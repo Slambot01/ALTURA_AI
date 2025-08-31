@@ -2498,7 +2498,6 @@ function App() {
   //   }
   // }, [authedFetch, idToken, isExtension]);
   const handleInstallGitHubApp = useCallback(async () => {
-    if (!idToken) return setError("Please log in first.");
     try {
       const data = await authedFetch("/api/github/install");
       if (data.url && isExtension) {
@@ -2508,7 +2507,7 @@ function App() {
     } catch (e) {
       setError("Could not connect to the GitHub App service.");
     }
-  }, [authedFetch, idToken, isExtension]);
+  }, [authedFetch, isExtension]); // <-- idToken is removed
   const handleStartResearch = async () => {
     if (!researchTopic.trim()) {
       setError("Please enter a research topic.");

@@ -17,10 +17,38 @@ const fs = require("fs");
 const analyzeRouter = require("./src/api/routes/analyze");
 require("dotenv").config();
 // --- Firebase Admin SDK Initialization ---
-const serviceAccount = require("./serviceAccountKey.json");
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+let serviceAccount;
+
+// Check if the service account JSON is in an environment variable (for Railway)
+if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+  try {
+    serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+  } catch (e) {
+    console.error(
+      "Error parsing Firebase service account JSON from environment variable:",
+      e
+    );
+  }
+}
+// Otherwise, fall back to the local file path (for local development)
+else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+  try {
+    serviceAccount = require(process.env.GOOGLE_APPLICATION_CREDENTIALS);
+  } catch (e) {
+    console.error("Error loading Firebase service account from file path:", e);
+  }
+} else {
+  console.error(
+    "Firebase credentials not found. Set FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS."
+  );
+}
+
+if (serviceAccount) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+  console.log("Firebase Admin SDK initialized successfully.");
+}
 const db = admin.firestore();
 
 // --- Google AI & OAuth2 Setups ---
